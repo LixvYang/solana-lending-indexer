@@ -1,7 +1,7 @@
 /**
  * INPUT: IDL 类型、Reader 与类型定义。
- * OUTPUT: decodeType / decodeFields，整数为 bigint，定点数保持字节。
- * POSITION: 由 IDL 驱动的纯 Borsh 参数解析。
+ * OUTPUT: decodeType / decodeFields，整数为 bigint，f32/f64 为 number，定点数保持字节。
+ * POSITION: 由 IDL 驱动的纯 Borsh 指令参数/事件解析。
  * SYNC: 修改时同步本头部与 folder.md。
  */
 import { Reader } from '../core/reader';
@@ -22,6 +22,8 @@ export function decodeType(type: IdlType, reader: Reader, idl: Idl): unknown {
       return reader.integer(Number(type.slice(1)) / 8, type[0] === 'i');
     }
     switch (type) {
+      case 'f32': return reader.bytes(4).readFloatLE();
+      case 'f64': return reader.bytes(8).readDoubleLE();
       case 'bool': return reader.bool();
       case 'pubkey': return reader.pubkey();
       case 'string': return reader.string();

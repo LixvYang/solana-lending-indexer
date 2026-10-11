@@ -9,7 +9,7 @@
 | M0 | 构建并部署 marginfi mrgn-0.1.0 到 devnet,完成一次 deposit + borrow | EP3 | done | 已部署并升级到 mock 价格版本(D-009);真实 Switchboard 因 devnet oracle 离线未启用(D-008) |
 | M1 | 确定性剧本 + fixtures + expected.json | EP3 | doing | 2026-10-11：scenario 代码与离线检查已实现；devnet Switchboard 方案见 D-007。未运行 --execute、真实 Crossbar/feed/crank/改价、链上借贷清算、对账或重跑；未生成真实 fixtures |
 | M2 | 指令解码器 | EP4 | done | 2026-10-12：手写 base58 / Reader / IDL Borsh、账户角色、顶层与 inner 指令及离线 CLI；32 笔 fixture 中的 18 条指令与 Anchor 一致；另有对全部 23 个带参数指令的 Anchor 编码往返测试(合成数据)；typecheck 通过，36 项测试通过。非空 v0 地址表与 marginfi CPI 仅合成测试，未联网或发送交易；fixture 之外的指令没有链上样本 |
-| M3 | 事件 / inner instruction / 账户状态解码 | EP5 | todo | 账户为 zero_copy,按偏移解析 |
+| M3 | 事件 / inner instruction / 账户状态解码 | EP5 | done | 2026-10-12：离线日志栈、IDL C 布局、I80F48 与账户解码、精确对账及两个 CLI；32 笔/25 事件、7 账户与 Anchor 对照通过；四种实现突变捕获并还原。差值实测及归因限制见 D-011；未联网、发送交易或提交 git |
 | M4 | 数据库与幂等入库、回填、游标 | EP6 | todo | |
 | M5 | API + 前端(含 X 光面板) | EP7 | todo | |
 | M6 | 按章节整理提交历史、打 tag、写 docs 与 video 分镜 | 全部 | todo | |
@@ -28,7 +28,7 @@
 
 ## 下一步
 
-1. M3：事件与账户状态解码；先处理 D-009 提到的清算数量精度残留，再做余额对账。
+1. M4：先存 raw_tx，再重放 decoder，实现数据库幂等入库/回填/游标。M3 保留 f64 差值，未修改 expected。
 2. 验证新 `--run-id` 重跑得到结构一致的结果。
 3. 监控 Switchboard devnet oracle,恢复后评估切回。
 
@@ -39,3 +39,14 @@
 - CLI 通过 `node --import tsx` 验证成功/缺参数/未知签名与任意当前目录；`pnpm exec node --import tsx scripts/decode-tx.ts <签名>` 实际运行成功。直接 `pnpm exec tsx ...` 因沙箱禁止本地 IPC 管道而在脚本执行前报 `listen EPERM`，该启动方式未验证成功。32 笔 fixture 的 18 条 marginfi 指令（11 类）与 Anchor 参数对照通过；全部步骤金标准、借款与清算账户角色/remaining 顺序通过。
 - 没有联网、运行 `fetch-fixtures.ts` / `--execute`、部署、发送链上交易、启动数据库或提交 git。没有实现/验收 M3 的事件/账户解码或余额对账。
 - 尚待真实样本验证：非空 v0 地址表、marginfi CPI，以及 fixture 未出现的 25 类指令参数。string / bytes / vec / 元组 / 有符号整数等通过合成测试，不把这些结果视为新增链上验证。
+
+
+## M3 离线验收（2026-10-12）
+
+- 实现事件调用栈（顶层下标/CPI 归属）、未知/失败/截断处理，Borsh f32/f64、IDL repr(C) 布局、四类账户严格长度解码、精确定点数及有理数对账。新增两个离线 CLI；README、模块清单、EP5 与 D-011 已同步；不新增依赖、不改 `scenario/expected.ts`。
+- 任务描述 24 事件与实际 fixture 25 不一致；以完整 fixture 验证全部 25 条，不删除事件。七份账户所有字段与 Anchor 对照；两个 bank shares 四个逐位不变量及四个 active 组合的数量分子与 Anchor snapshot 完全一致。全部六个用户/池子组合保留流量差，非零差的精确分子、方向与量级有固定断言。
+- 最终 `pnpm typecheck` 退出码 0；`pnpm test` 57 项通过、0 失败、0 跳过（退出码 0）。测试依赖的 bigint 原生绑定不可用，使用已有纯 JavaScript 回退，未安装或重建依赖。
+- 临时实现突变：Bank asset_share_value 偏移 +8（4 项失败）、I80F48 经 Number（4 项失败）、移除失败交易屏蔽（1 项失败）、清算 39/38 比例改为 1（2 项失败）；针对性测试均退出 1，随后逐项还原。
+- 实际运行两个 `pnpm exec node --import tsx` CLI 成功；子进程测试覆盖任意当前目录、缺参数、多参数、未知地址/类型。只读本地 fixtures，未使用直接 tsx 启动方式。
+- 未联网、查询 RPC、运行 fetch-* / --execute、重跑剧本、构建/部署程序、发送交易、启动数据库或提交 git。失败/CPI/截断仅合成日志；其他事件/账户版本/枚举值、withdraw_all/破产/非零开仓费/Token-2022 费用未用真实样本验证。
+- 不确定性：利息归因符合正向与上界，但没有中间账户快照，未精确拆出每笔利息/ceil/f64/定点截断的贡献；Carol 清算支出仍按名义 39/38 推算，没有逐位重演上游定点运算。精确验收对象是结束状态与 shares，不把事件净流量当真实余额。

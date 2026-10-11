@@ -6,12 +6,14 @@
 
 ## 快速开始
 
-完整 indexer 尚未可用。当前可启动数据库、离线查看 M1 剧本计划，以及解码本地交易 fixture:
+完整 indexer 尚未可用。当前可启动数据库、离线查看 M1 剧本计划，以及解码本地交易/账户 fixture:
 
 ```bash
 docker compose up -d
 pnpm scenario
 pnpm exec tsx scripts/decode-tx.ts 4FRUHaLGRdvAcV88XtTgCUGE76oAE1tKFqL5dEodxsmJhUgshUnEnkxKXEdn3q2r2XFRPTMihAfgsUQpuMhQivjt
+pnpm exec node --import tsx scripts/print-layout.ts Bank
+pnpm exec node --import tsx scripts/decode-account.ts F99hSfDM9ymMiMshg38uKWRpXtmZ7rSKVX5F1aHkjWTb
 pnpm typecheck
 pnpm test
 ```
@@ -19,6 +21,8 @@ pnpm test
 剧本说明见 [scenario/README.md](scenario/README.md)。默认不访问网络、不读取钱包，`--execute` 才执行 devnet 剧本。`decode-tx.ts` 只读本地 fixture，输出指令名称、参数、账户角色和调用位置；实现与验证边界见 [EP4](docs/chapters/ep04-instructions.md)。
 
 如果沙箱禁止 tsx 的本地 IPC 管道，可用 `pnpm exec node --import tsx scripts/decode-tx.ts <签名>`；本次验证使用这一启动方式。
+
+M3 已实现日志事件、IDL 计算的 zero_copy 账户布局、精确 I80F48 和事件/状态对账；两个新增 CLI 只读本地 IDL/fixture。32 笔 fixture 实际有 25 条事件（任务文件写 24），七份账户与 Anchor 独立对照通过；shares 不变量与数量分子精确相等，事件净流量仍有利息/清算精度/取整差。实测与未验证边界见 [EP5](docs/chapters/ep05-events-and-accounts.md) 和 [D-011](docs/decisions.md)。
 
 代码变化时同步本 README、相关 `folder.md` 与文件头部的 INPUT / OUTPUT / POSITION 注释。
 

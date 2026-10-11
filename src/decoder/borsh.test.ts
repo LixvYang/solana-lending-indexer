@@ -1,6 +1,6 @@
 /**
  * INPUT: decodeType、固定 IDL 与合成类型。
- * OUTPUT: 原始字节到参数值的离线断言。
+ * OUTPUT: 原始字节到参数/浮点值的离线断言。
  * POSITION: IDL 类型解码回归测试。
  * SYNC: 修改时同步本头部与 folder.md。
  */
@@ -50,4 +50,12 @@ test('defined 结构体与枚举支持命名/元组字段，WrappedI80F48 保留
   const bytes = Array.from({ length: 16 }, (_, i) => i);
   assert.deepEqual(decodeType({ defined: { name: 'WrappedI80F48' } }, new Reader(Buffer.from(bytes)), marginfiIdl), { value: bytes });
   assert.throws(() => decodeType({ defined: { name: 'Missing' } }, new Reader(Buffer.alloc(0)), idl), /Missing/);
+});
+
+test('Borsh f32/f64 为 IEEE754 小端浮点数，保留链上 f64 原值', () => {
+  const bytes = Buffer.alloc(12); bytes.writeFloatLE(-1.25); bytes.writeDoubleLE(5512499999.999999, 4);
+  const reader = new Reader(bytes);
+  assert.equal(decodeType('f32', reader, marginfiIdl), -1.25);
+  assert.equal(decodeType('f64', reader, marginfiIdl), 5512499999.999999);
+  assert.throws(() => decodeType('f64', new Reader(Buffer.alloc(7)), marginfiIdl), /offset/);
 });

@@ -10,6 +10,8 @@ import type { Idl } from './idl';
 export interface RpcTransaction {
   transaction: { signatures: string[]; message: { accountKeys: string[]; instructions: RpcInstruction[] } };
   meta?: {
+    err?: unknown;
+    logMessages?: string[] | null;
     loadedAddresses?: { writable: string[]; readonly: string[] };
     innerInstructions?: { index: number; instructions: RpcInstruction[] }[] | null;
   } | null;
