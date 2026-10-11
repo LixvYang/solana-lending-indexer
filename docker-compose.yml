@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: indexer
+      POSTGRES_PASSWORD: indexer
+      POSTGRES_DB: indexer
+    ports:
+      - "5433:5432" # 避开本机已有的 5432
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+      - ./src/store/migrations:/docker-entrypoint-initdb.d:ro

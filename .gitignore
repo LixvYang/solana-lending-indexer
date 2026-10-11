@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# 数据库本地卷
+pgdata/
+
+# marginfi 上游源码与构建产物(由 program/ 脚本拉取,不入库)
+program/.upstream/
+program/out/
+
+# 密钥(剧本账户确定性派生,不落盘)
+*.keypair.json
+**/id.json

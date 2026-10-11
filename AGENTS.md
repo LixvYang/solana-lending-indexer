@@ -1,0 +1,41 @@
+# AGENTS.md
+
+本项目是一个教学型 Solana 数据开发示例:把 marginfi(mrgn-0.1.0)部署到 devnet,造出借贷行为,再用自己写的 indexer 把链上数据解析进 Postgres,最后用前端展示借贷池。配合 B 站合集视频使用。
+
+目标与进度见 `docs/00-goals.md`、`docs/progress.md`,决策记录见 `docs/decisions.md`。**开始工作前先读这三个文件,结束工作时更新 `docs/progress.md`。**
+
+## 目录
+
+```
+docs/        教程文字(给读者)+ 目标/进度/决策
+video/       分镜脚本(给作者自己)
+program/     marginfi 固定版本的构建与部署脚本(上游源码不入库)
+scenario/    确定性剧本:造代币、mock 价格、存/借/清算
+fixtures/    剧本交易的原始 getBlock JSON(解码器的金标准数据)
+src/core     rpc 封装、字节读取器、类型
+src/decoder  指令/事件/账户解码(EP4、EP5)
+src/ingest   取块、回填、实时订阅、游标
+src/store    迁移 SQL 与写入层(EP6)
+src/api      只读接口
+web/         前端(EP7)
+scripts/     重放、清库、文档片段展开
+```
+
+## 约定
+
+- **一份最终代码,不按章节复制目录。** 模块边界即章节边界;章节检查点用 git tag / 分支表示,按章节顺序整理提交历史。
+- **先存原始,再解码。** `ingest` 只写 `raw_tx`;`decoder` 是纯函数,可对 `raw_tx` 重放。
+- **未知 discriminator 不抛错**,原样入库为 `unknown`。
+- 代码写给人读:一文件一概念,单文件尽量不超过约 150 行;注释讲"这些字节是什么、为什么",不讲"这行做了什么";不做抽象层与依赖注入。
+- 教学片段用区域标记,文档通过标记引用,不手贴代码:`// #region ep4-discriminator` … `// #endregion`。
+- 依赖版本全部固定(不用 `^`、`latest`)。
+- 未核实的事实在文档里标注"待验证",核实后写入 `docs/decisions.md`。
+- 不提交私钥与 `.env`。剧本账户由固定字符串确定性派生,不落盘密钥文件。
+
+## 常用命令
+
+(随实现补充,当前仅有 `docker compose up -d` 启动 Postgres。)
+
+## Skills
+
+Solana 相关 skills 放在 `.agents/skills/<name>/SKILL.md`;`.claude/skills` 是指向它的软链接,Claude Code 与其他代理共用同一份。用法见 `.agents/README.md`。
