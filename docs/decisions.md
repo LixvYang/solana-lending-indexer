@@ -52,7 +52,7 @@ mrgn-0.1.0 的 `events.rs` 定义了 18 个事件,涵盖创建、配置、deposi
 
 ## D-006 技术选型
 
-TypeScript 全栈(剧本、indexer、前端),Postgres,依赖版本固定。Solana JS SDK 在 `@solana/web3.js` 1.x 与 `@solana/kit` 之间二选一,**待定**,选定后锁版本并记录于此。
+TypeScript 全栈(剧本、indexer、前端),Postgres,依赖版本固定。M1 使用现有已安装并锁定的 `@solana/web3.js` 1.95.8 与 Anchor 0.31.1(2026-10-11)，没有修改依赖版本。
 
 ## D-007 devnet 价格改用 Switchboard(用户决策,2026-10-11)
 
@@ -65,3 +65,39 @@ TypeScript 全栈(剧本、indexer、前端),Postgres,依赖版本固定。Solan
 1. 能否在 devnet 为自建代币创建 Switchboard On-Demand feed,并用固定值任务得到可控价格。我没有实测,不确定是否稳定。
 2. `devnet` feature 同时会把 marginfi 的 program id 与 Pyth id 换成上游固定值,`build.sh` 的补丁需要覆盖这些分支。
 3. 价格有最大有效期,录制时每次借贷前都要先更新,剧本要加这一步。
+
+## D-008 M1 源码核实与离线构造(2026-10-11)
+
+- `program/.upstream/programs/marginfi/src/state/marginfi_group.rs::get_oracle_max_age` 只有旧 SwitchboardV2 与 Pyth 分支在 0 时返回默认值；**SwitchboardPull 为 0 时返回 0**。剧本显式设为 240 秒，使用前独立 crank，实际有效期窗口待链上验证。
+- `lending_pool_add_bank` 的 `BankConfigCompact` 不含 oracle；按 IDL / `tests/utils/group-instructions.ts` 先 add bank，再 `lending_pool_configure_bank_oracle(4, feed)`。全局 FeeState 是创建 group 的前置条件，来源 `tests/rootHooks.ts` / `instructions/marginfi_group/initialize.rs`，缺失时在步骤 3 初始化。
+- 资产权重 tSOL 0.8 / 0.9，负债权重 tUSDC 1.1 / 1.05，使 100 tSOL 按 $100 抵押借 5000 tUSDC 的初始健康度约 +2500 美元，按 $50 的维持健康度约 -750 美元(未计利息)。利率参照 `tests/utils/types.ts`，开仓费设为 0。
+- `state/marginfi_account.rs::check_post_liquidation_condition_and_get_account_health` 禁止一次清算清空负债或越过维持线。因此清算 10 tSOL，再由 Bob `repay_all` 收尾。账户 observation 顺序来自 `tests/utils/user-instructions.ts` / `instructions/marginfi_account/liquidate.rs`；真实 IDL 的离线构造与序列化长度已检查，**不代表链上交易已验证**。
+
+## D-009 事件对账的限制(源码核实,2026-10-11)
+
+`events.rs` 的普通借贷事件只报告本次数量；计息事件不含逐账户利息；`LiquidationBalances` 用 f64，且只报告清算人的资产 bank 存款 / 负债 bank 借款，没有其负债 bank 的存款。来源 `instructions/marginfi_account/liquidate.rs` 与 `constants.rs`：清算人支出使用 0.975 折扣，被清算人减债使用 0.95 折扣，差额进保险。因此 M1 expected 记录事件净流量并用 39/38 推算清算人支出，同时保存 Anchor 账户快照中的有理数原生余额。精确链上对账仍待验证，不把事件净流量标记为真实结束余额。
+
+## D-008 Switchboard devnet 队列当前不可用(实测,2026-10-11)
+
+**现象**:剧本第 2 步(创建 feed 后 crank)失败。逐层排查:
+1. SDK 默认的 Crossbar 域名 `crossbar.switchboard.xyz` 已解析不到;换 `crossbar.switchboardlabs.xyz` 后 `/store`(v1)可用,feed 账户创建成功。
+2. 该 Crossbar 的 `/gateways?network=devnet` 返回 `[]`,SDK 报 "No gateways available"。
+3. 改为读链上队列登记的 gateway:9 个 oracle 的 gateway 地址在 TLS 握手阶段全部无响应(同一 IP 换成别的 SNI 则握手正常,所以不是本机网络问题)。
+4. 查链上心跳:队列 `EYiAmGSdsQTuCw413V5BzaruWuCCSDgTPtBGvLkXHbe7` 的 `nodeTimeout` 为 300 秒,而 9 个 oracle 的最后心跳距今:5 个约 39 小时(140018–140363 秒),其余约 25、31、46、55 天。**最新的也已超过 1.6 天**。
+
+**结论**:devnet 上没有存活的 Switchboard oracle,crank 目前做不到,不是代码问题。参考项目 `usdx-solana` 在 2026-09-14 实测时队列心跳还是"刚刚",说明这是之后才出现的变化。
+
+**已知的副产物(已修,保留)**:`CROSSBAR_URL` 可配置;crank 改为读链上 gateway;创世哈希写错的 bug。
+
+**未验证**:oracle 何时恢复;Switchboard 是否还有别的 devnet 队列可用。
+
+### D-008 补充:进一步核实(2026-10-11)
+
+- 链上共 191 个 devnet Switchboard oracle 账户,**全部**心跳不新鲜,最新的距今约 39 小时(5 个几乎同时停止,像是同一次故障)。
+- `crossbar.switchboard.xyz`(官方文档仍写它是公共地址)经 Cloudflare DoH 确认**没有任何 DNS 记录**。`crossbar.switchboardlabs.xyz` 可用于 `/store`,但 `/gateways?network=devnet` 为空。
+- 官方 agent skill 文档推荐的新路径是 `queue.fetchManagedUpdateIxs(crossbar, [feedId], …)`(oracle quote),同样依赖存活的 oracle,不能绕开。
+- SDK 只登记一个 devnet 队列(`EYiAmGSd…`)。
+- 官方文档建议生产环境自建 Crossbar;自建只能解决 Crossbar,解决不了 oracle 离线。
+- 软件侧无法绕开:feed 账户归 Switchboard 程序所有,只有它能写入价格。
+
+**可行的替代(未实施)**:marginfi 对价格账户只检查 owner 与布局。上游 `mocks` 程序有通用的 `write(offset, data)` 指令,可以让账户归 mocks 所有、内容是 Switchboard `PullFeedAccountData` 的 3208 字节布局,构建时把 `SWITCHBOARD_PULL_ID` 补丁成 mocks 的地址。这样 marginfi 走的仍是 SwitchboardPull 解析路径,只是"crank"换成我们自己写入。需要把 marginfi 以这个补丁重新升级部署(同一程序地址)。

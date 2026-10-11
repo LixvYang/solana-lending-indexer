@@ -6,7 +6,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"scenario/**/*.test.ts\" \"src/**/*.test.ts\"",
-    "scenario": "tsx scenario/run.ts"
+    "scenario": "tsx scenario/run.ts",
+    "transfer-sol": "tsx scripts/transfer-sol.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",

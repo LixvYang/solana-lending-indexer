@@ -6,11 +6,16 @@
 
 ## 快速开始
 
-尚未可用。当前只能启动数据库:
+完整 indexer 尚未可用。当前可启动数据库，以及离线查看 M1 剧本计划:
 
 ```bash
 docker compose up -d
+pnpm scenario
+pnpm typecheck
+pnpm test
 ```
+
+剧本说明见 [scenario/README.md](scenario/README.md)。默认不访问网络、不读取钱包，`--execute` 才执行 devnet 剧本；链上验收尚未运行。
 
 ## 章节
 
