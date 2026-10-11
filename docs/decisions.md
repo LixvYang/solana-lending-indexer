@@ -113,3 +113,11 @@ TypeScript 全栈(剧本、indexer、前端),Postgres,依赖版本固定。M1 �
 - `SWITCHBOARD_PULL_ID` 与程序地址都是补丁值；视频里必须说明这是"布局一致的 mock"，不能说成真实 Switchboard 价格。
 
 已知小问题:`expected` 里清算相关的数量带有 f64 精度残留(例如 `5512499999.999999`)，M3 对账前需要改成整数/定点运算。
+
+## D-010 M2 指令布局与离线交叉校验（2026-10-12）
+
+- 固定 IDL 的全部 36 个 discriminator 与手算 `sha256("global:<snake_case 名称>")` 前 8 字节一致。依据：`src/decoder/discriminator.test.ts`。
+- 指令可达类型实际为 bool、pubkey、u8/u16/u32/u64、option、array、defined struct/enum；`WrappedI80F48` 参数按 IDL 的 `{ value: u8[16] }` 保留字节，不套用账户 zero_copy 对齐或换算小数。依据：固定 IDL 与 `src/decoder/borsh.ts`，fixture 的 BankConfigCompact 与 Anchor coder 解码一致。
+- 32 笔原始 RPC fixture 中共 18 条 marginfi 指令、11 类，名称与参数逐条与测试专用 `BorshCoder.instruction.decode` 一致。步骤金标准对照 `m1-run.json` 的独立事件记录；borrow 与 liquidate 的角色地址/remaining 顺序与 addresses 一致。依据：`src/decoder/transaction.test.ts`。
+- 输出的指令名、参数/结构体/枚举字段保持原始 IDL 拼写，账户角色名也保持 IDL 原样的 snake_case(审查时统一:此前账户名被转成 camelCase 而参数名不是,风格不一致;snake_case 与 Rust、IDL、以后的数据库列名一致)。数值为 bigint；原始 bytes 与 WrappedI80F48 字节为 number[]。非法 base58 无法恢复字节，错误结果保留 RPC 原文并注明编码；不足 8 字节无法识别名称，按 unknown 错误保留原始字节。
+- 非空 v0 loadedAddresses、嵌套账户分组、marginfi inner instruction 仅用合成数据验证。其余指令没有链上样本。审查时补了往返测试 `src/decoder/roundtrip.test.ts`:对全部 23 个带参数的指令各生成 20 组确定性伪随机参数,用 Anchor 编码后由我们解码并逐字段比对。这是合成数据,不是链上验证;并用突变(改坏 option 标签、enum 下标)确认测试能失败。指令参数里没有有符号整数,有符号读取只由 `reader.test.ts` 覆盖。事件/账户解码与对账仍属 M3。

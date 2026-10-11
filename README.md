@@ -6,16 +6,21 @@
 
 ## 快速开始
 
-完整 indexer 尚未可用。当前可启动数据库，以及离线查看 M1 剧本计划:
+完整 indexer 尚未可用。当前可启动数据库、离线查看 M1 剧本计划，以及解码本地交易 fixture:
 
 ```bash
 docker compose up -d
 pnpm scenario
+pnpm exec tsx scripts/decode-tx.ts 4FRUHaLGRdvAcV88XtTgCUGE76oAE1tKFqL5dEodxsmJhUgshUnEnkxKXEdn3q2r2XFRPTMihAfgsUQpuMhQivjt
 pnpm typecheck
 pnpm test
 ```
 
-剧本说明见 [scenario/README.md](scenario/README.md)。默认不访问网络、不读取钱包，`--execute` 才执行 devnet 剧本；链上验收尚未运行。
+剧本说明见 [scenario/README.md](scenario/README.md)。默认不访问网络、不读取钱包，`--execute` 才执行 devnet 剧本。`decode-tx.ts` 只读本地 fixture，输出指令名称、参数、账户角色和调用位置；实现与验证边界见 [EP4](docs/chapters/ep04-instructions.md)。
+
+如果沙箱禁止 tsx 的本地 IPC 管道，可用 `pnpm exec node --import tsx scripts/decode-tx.ts <签名>`；本次验证使用这一启动方式。
+
+代码变化时同步本 README、相关 `folder.md` 与文件头部的 INPUT / OUTPUT / POSITION 注释。
 
 ## 章节
 
@@ -31,7 +36,7 @@ pnpm test
 
 ## 局限
 
-不是生产级:只入库 finalized 数据,不处理链重组;只解码剧本涉及的指令,其余原样存为 `unknown`。
+不是生产级:只入库 finalized 数据,不处理链重组。M2 按固定 IDL 解码指令；未知 discriminator 保留为 `unknown`，损坏指令返回 `decodeError`。真实 fixture 只覆盖 11 类指令，其他类型尚未逐类用真实交易验证。
 
 ## 许可
 
