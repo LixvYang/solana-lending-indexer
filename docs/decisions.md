@@ -6,7 +6,11 @@
 
 上游 `marginfi-v2` 为 Apache-2.0(本机克隆 `../marginfi-v2/LICENSE`)。可以 fork 与再分发,需保留许可与版权声明。本项目自身的许可证尚未选定。
 
-## D-002 mrgn-0.1.0 的构建工具链(已核实,待实际构建验证)
+## D-002 mrgn-0.1.0 的构建工具链(已验证,2026-10-11)
+
+**结果**:用 solana 2.1.20 的 `cargo-build-sbf` + 上游要求的 rust 1.75 可以成功构建 marginfi 与 mocks,不需要 solana 1.18.17 / anchor 0.30.1 CLI。`program/build.sh` 已跑通。构建时 spl-token-2022 会报栈帧超限提示(confidential transfer),只影响该路径,不影响本项目用到的指令;未实测。
+
+以下为核实前的分析:
 
 上游 tag `mrgn-0.1.0` 存在。该 tag 要求:
 
@@ -29,7 +33,14 @@
 
 mrgn-0.1.0 的 `OracleSetup` 只有 `None / PythLegacy / SwitchboardV2 / PythPushOracle / SwitchboardPull / StakedWithPythPush`,**没有固定价格模式**。因此只能让程序读到"自己构造的、格式符合要求的价格账户"。
 
-候选:构造 Pyth 旧版 price 账户并写入固定价格。**待验证**:程序是否校验账户 owner / 发布时间;若校验则此路不通,需要换方案(例如用自己部署的程序拥有该账户,或改用较新的带固定价格模式的版本)。
+**已核实源码(2026-10-11)**:
+- `PythLegacy` 读取价格时要求账户 owner 等于 `PYTH_ID`(`state/price.rs` `load_pyth_price_feed`)。
+- `PYTH_ID` 与价格新鲜度检查由 cargo feature 决定:`devnet` / `mainnet-beta` / `staging` 下是真实 Pyth 程序且**检查价格时间**;**不带这三个 feature 的构建(localnet 模式)**下 `PYTH_ID` 是上游自带的 `programs/mocks` 程序,且**忽略价格时间**(`live!()` 为假)。
+- 上游自带 `programs/mocks`,可以写出 Pyth 布局的价格账户。
+
+**方案**:不带 cluster feature 构建 marginfi(`--no-default-features`);同时部署 `mocks`;由于上游 mocks 与 marginfi 的原始 program id 我们没有私钥,构建时把 `declare_id!` 和 `PYTH_ID` 补丁成自己的 keypair。效果:价格永不过期,可随时用 mocks 改价,不依赖 Pyth / Switchboard。
+
+**待验证**:补丁后的构建能否通过;mocks 的指令能否创建并更新价格账户。
 
 ## D-004 账户布局(部分核实)
 
@@ -42,3 +53,15 @@ mrgn-0.1.0 的 `events.rs` 定义了 18 个事件,涵盖创建、配置、deposi
 ## D-006 技术选型
 
 TypeScript 全栈(剧本、indexer、前端),Postgres,依赖版本固定。Solana JS SDK 在 `@solana/web3.js` 1.x 与 `@solana/kit` 之间二选一,**待定**,选定后锁版本并记录于此。
+
+## D-007 devnet 价格改用 Switchboard(用户决策,2026-10-11)
+
+用户要求部署到 devnet 时代币价格走 Switchboard。这与 D-003 的 mock 方案不同,两者并存:
+
+- **本地/确定性重放(fixtures、对账)**:仍用 mocks,价格不过期,结果可复现。
+- **devnet 演示**:需带 `devnet` feature 构建(此时检查价格时间,`SWITCHBOARD_PULL_ID` 为 devnet 地址,源码 `constants.rs` 另有 mainnet 地址),并让每笔涉及价格的交易前先更新 feed。
+
+**待验证(风险)**:
+1. 能否在 devnet 为自建代币创建 Switchboard On-Demand feed,并用固定值任务得到可控价格。我没有实测,不确定是否稳定。
+2. `devnet` feature 同时会把 marginfi 的 program id 与 Pyth id 换成上游固定值,`build.sh` 的补丁需要覆盖这些分支。
+3. 价格有最大有效期,录制时每次借贷前都要先更新,剧本要加这一步。
