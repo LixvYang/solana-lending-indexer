@@ -1,0 +1,36 @@
+{
+  "unit": "mint 原生数量（不是 shares；除以 10^decimals 得到代币数量）",
+  "accounts": {
+    "2yDJ1WYiAf7kL1t4fSmTkx91wPJFSEhMkUZdWo526Pbb": {
+      "F99hSfDM9ymMiMshg38uKWRpXtmZ7rSKVX5F1aHkjWTb": {
+        "netDeposit": "9000000000",
+        "netBorrow": "0"
+      }
+    },
+    "J3qhTbWkvqqu6jyjHQLmj9kkZ9GkYAxuFrDrSLrwx54r": {
+      "EkXhsMEg5D4xeBXH6pd4MQnTLiRukeKiS8k4XyWP5Kgq": {
+        "netDeposit": "90000000000",
+        "netBorrow": "0"
+      },
+      "F99hSfDM9ymMiMshg38uKWRpXtmZ7rSKVX5F1aHkjWTb": {
+        "netDeposit": "0",
+        "netBorrow": "0"
+      }
+    },
+    "J3VRUhRDd3Xo5ef8HtmdjFmKoQ4JQcEAjcuSLMRTwDYZ": {
+      "F99hSfDM9ymMiMshg38uKWRpXtmZ7rSKVX5F1aHkjWTb": {
+        "netDeposit": "5512499999.999999",
+        "netBorrow": "0"
+      },
+      "EkXhsMEg5D4xeBXH6pd4MQnTLiRukeKiS8k4XyWP5Kgq": {
+        "netDeposit": "10000000000",
+        "netBorrow": "0"
+      }
+    }
+  },
+  "notes": [
+    "这里只累加事件净流量；利息、开仓费不完整地出现在余额事件中，不能直接当作账户快照。",
+    "清算 f64 丢失定点精度；Carol 存款消耗按 mrgn-0.1.0 的 2.5% 清算费和 2.5% 保险费推算。",
+    "精确对账仍需 bank share value 和账户 snapshots；run 文件另存 Anchor 解码的结束快照。"
+  ]
+}

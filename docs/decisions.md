@@ -101,3 +101,15 @@ TypeScript 全栈(剧本、indexer、前端),Postgres,依赖版本固定。M1 �
 - 软件侧无法绕开:feed 账户归 Switchboard 程序所有,只有它能写入价格。
 
 **可行的替代(未实施)**:marginfi 对价格账户只检查 owner 与布局。上游 `mocks` 程序有通用的 `write(offset, data)` 指令,可以让账户归 mocks 所有、内容是 Switchboard `PullFeedAccountData` 的 3208 字节布局,构建时把 `SWITCHBOARD_PULL_ID` 补丁成 mocks 的地址。这样 marginfi 走的仍是 SwitchboardPull 解析路径,只是"crank"换成我们自己写入。需要把 marginfi 以这个补丁重新升级部署(同一程序地址)。
+
+## D-009 价格方案落地:Switchboard 布局的 mock 价格账户(2026-10-11,已在 devnet 验证)
+
+采用 D-008 的替代方案。**实测结果**:marginfi(以 `PRICE_ORACLE=mock` 补丁、`devnet` feature 构建并升级到原地址)接受 mocks 程序拥有、按 `PullFeedAccountData` 布局写入的价格账户,SwitchboardPull 解析路径正常工作;12 步剧本在 devnet 一次跑通(32 笔交易全部 finalized,覆盖 deposit / borrow / repay / withdraw / liquidate / accrue)。
+
+- 偏移表用链上真实账户 `fixtures/switchboard-pullfeed-uncranked.bin` 校验(authority、queue、name、min_responses、max_staleness 全部对上)。
+- 价格由 mocks 的 `write(offset, data)` 写入，目标账户须签名；"crank" 即用链上时间重写时间戳与 slot。
+- 改价(tSOL 100 → 50)直接重写价格区域，不需要重配 Bank。清算按预期触发。
+- 切回真实 Switchboard:`PRICE_ORACLE=switchboard ./program/build.sh` 重新构建升级，剧本设 `PRICE_PROVIDER=switchboard`。**该路径只验证到 feed 创建，crank 从未成功**。
+- `SWITCHBOARD_PULL_ID` 与程序地址都是补丁值；视频里必须说明这是"布局一致的 mock"，不能说成真实 Switchboard 价格。
+
+已知小问题:`expected` 里清算相关的数量带有 f64 精度残留(例如 `5512499999.999999`)，M3 对账前需要改成整数/定点运算。

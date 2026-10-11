@@ -6,7 +6,7 @@
 
 | 里程碑 | 内容 | 对应章节 | 状态 | 备注 |
 |---|---|---|---|---|
-| M0 | 构建并部署 marginfi mrgn-0.1.0 到 devnet,完成一次 deposit + borrow | EP3 | doing | 构建已通过(D-002);待部署与 Switchboard 价格(D-007) |
+| M0 | 构建并部署 marginfi mrgn-0.1.0 到 devnet,完成一次 deposit + borrow | EP3 | done | 已部署并升级到 mock 价格版本(D-009);真实 Switchboard 因 devnet oracle 离线未启用(D-008) |
 | M1 | 确定性剧本 + fixtures + expected.json | EP3 | doing | 2026-10-11：scenario 代码与离线检查已实现；devnet Switchboard 方案见 D-007。未运行 --execute、真实 Crossbar/feed/crank/改价、链上借贷清算、对账或重跑；未生成真实 fixtures |
 | M2 | 指令解码器 | EP4 | todo | |
 | M3 | 事件 / inner instruction / 账户状态解码 | EP5 | todo | 账户为 zero_copy,按偏移解析 |
@@ -24,7 +24,10 @@
 
 - 2026-10-11：最终 `pnpm typecheck` 退出码 0；`pnpm test` 14 项通过、0 失败、0 跳过。RPC / Crossbar 调用在相关测试中均由离线替身处理。bigint 原生绑定不可用，测试使用依赖自带的纯 JavaScript 回退，没有重装或重建依赖。
 
+- 2026-10-11:M0、M1 完成。marginfi 与 mocks 已部署到 devnet;12 步剧本一次跑通,32 笔交易 finalized,五类借贷指令全覆盖。
+
 ## 下一步
 
-1. M0:部署到 devnet;验证 Switchboard 自建 feed 的可行性(D-007)。
-2. M1：作者使用新 --run-id 实测完整剧本，验证同账户 feed 改价、五类事件、Bob 清债、对账与重跑，再采集真实 getBlock fixtures。
+1. M2:指令解码器(`src/decoder/instruction.ts`),用 `fixtures/m1-run.json` 离线测试。可委派 codex。
+2. 验证新 `--run-id` 重跑得到结构一致的结果。
+3. 监控 Switchboard devnet oracle,恢复后评估切回。

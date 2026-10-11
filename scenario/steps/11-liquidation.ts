@@ -1,7 +1,7 @@
 import type { Context } from '../lib/context';
 import { lending, liquidate } from '../lib/marginfi';
 import { send } from '../lib/rpc';
-import { crank } from '../lib/switchboard';
+import { crank } from '../lib/price';
 
 export async function step(ctx: Context): Promise<void> {
   await send(ctx, 'carol deposit 6000 tUSDC', [await lending(ctx, 'deposit', 'carol', 'tUSDC', 6_000_000_000n)],

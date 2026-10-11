@@ -2,7 +2,7 @@ import type { Context } from '../lib/context';
 import { lending } from '../lib/marginfi';
 import { send } from '../lib/rpc';
 import { hasDebt } from '../lib/state';
-import { crank } from '../lib/switchboard';
+import { crank } from '../lib/price';
 
 export async function step(ctx: Context): Promise<void> {
   const withdraw = await lending(ctx, 'withdraw', 'alice', 'tUSDC', 1_000_000_000n, ['tUSDC']);

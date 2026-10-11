@@ -9,6 +9,10 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 UPSTREAM_REPO="${UPSTREAM_REPO:-https://github.com/mrgnlabs/marginfi-v2}"
 UPSTREAM_TAG="${UPSTREAM_TAG:-mrgn-0.1.0}"
 MODE="${MODE:-devnet}"
+# PRICE_ORACLE=mock(默认):marginfi 认 mocks 程序拥有的账户为 Switchboard 价格账户(布局相同,价格由我们写入)。
+#   原因:devnet 的 Switchboard oracle 离线,无法 crank,见 docs/decisions.md D-008。
+# PRICE_ORACLE=switchboard:保持官方 devnet On-Demand 程序,oracle 恢复后使用。
+PRICE_ORACLE="${PRICE_ORACLE:-mock}"
 SOLANA_BIN="${SOLANA_BIN:-$HOME/.local/share/solana/install/releases/2.1.20/solana-release/bin}"
 export PATH="$SOLANA_BIN:$PATH"
 
@@ -34,8 +38,11 @@ MOCKS_ID="$(solana-keygen pubkey "$OUT/keys/mocks.json")"
 OLD_MARGINFI="2jGhuVUuy3umdzByFx8sNWUAaf5vaeuDm78RDPEnhrMr"
 OLD_MOCKS="5XaaR94jBubdbrRrNW7DtRvZeWvLhSHkEGU3jHTEXV3C"
 OLD_MARGINFI_DEVNET="neetcne3Ctrrud7vLdt2ypMm21gZHGN2mCmqWaMVcBQ" # devnet feature 分支的 declare_id
-grep -rl -e "$OLD_MARGINFI" -e "$OLD_MOCKS" -e "$OLD_MARGINFI_DEVNET" "$SRC/programs" --include='*.rs' | while read -r f; do
-  perl -pi -e "s/$OLD_MARGINFI/$MARGINFI_ID/g; s/$OLD_MOCKS/$MOCKS_ID/g; s/$OLD_MARGINFI_DEVNET/$MARGINFI_ID/g" "$f"
+OLD_SWITCHBOARD_DEVNET="Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2" # devnet feature 下的 SWITCHBOARD_PULL_ID
+SWITCHBOARD_ID="$OLD_SWITCHBOARD_DEVNET"
+[ "$PRICE_ORACLE" = "mock" ] && SWITCHBOARD_ID="$MOCKS_ID"
+grep -rl -e "$OLD_MARGINFI" -e "$OLD_MOCKS" -e "$OLD_MARGINFI_DEVNET" -e "$OLD_SWITCHBOARD_DEVNET" "$SRC/programs" --include='*.rs' | while read -r f; do
+  perl -pi -e "s/$OLD_MARGINFI/$MARGINFI_ID/g; s/$OLD_MOCKS/$MOCKS_ID/g; s/$OLD_MARGINFI_DEVNET/$MARGINFI_ID/g; s/$OLD_SWITCHBOARD_DEVNET/$SWITCHBOARD_ID/g" "$f"
 done
 
 # 4. 构建
@@ -47,7 +54,7 @@ fi
 cargo build-sbf --manifest-path "$SRC/programs/marginfi/Cargo.toml" "${FEATURES[@]}" --sbf-out-dir "$OUT"
 cargo build-sbf --manifest-path "$SRC/programs/mocks/Cargo.toml" --no-default-features --sbf-out-dir "$OUT"
 
-echo "mode:     $MODE"
+echo "mode:     $MODE (price oracle: $PRICE_ORACLE)"
 echo "marginfi: $MARGINFI_ID"
 echo "mocks:    $MOCKS_ID"
-printf '{"mode":"%s","marginfi":"%s","mocks":"%s"}\n' "$MODE" "$MARGINFI_ID" "$MOCKS_ID" > "$OUT/program-ids.json"
+printf '{"mode":"%s","priceOracle":"%s","marginfi":"%s","mocks":"%s"}\n' "$MODE" "$PRICE_ORACLE" "$MARGINFI_ID" "$MOCKS_ID" > "$OUT/program-ids.json"
