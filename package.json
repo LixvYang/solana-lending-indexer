@@ -11,15 +11,18 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",
+    "@electric-sql/pglite": "0.5.8",
     "@solana/spl-token": "0.4.9",
     "@solana/web3.js": "1.95.8",
     "@switchboard-xyz/common": "5.8.5",
     "@switchboard-xyz/common-legacy": "1.1.1",
     "@switchboard-xyz/on-demand": "3.10.6",
-    "dotenv": "16.4.7"
+    "dotenv": "16.4.7",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@types/node": "22.10.2",
+    "@types/pg": "8.23.1",
     "tsx": "4.19.2",
     "typescript": "5.9.3"
   }
