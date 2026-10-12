@@ -1,0 +1,39 @@
+import type { AccountStatus, AccountView, PoolView } from '@contract';
+import { fmtToken, fmtUsd, short } from './format';
+
+const ICON = {
+  no_debt: <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="6" cy="6" r="4.5" /><path d="M3.5 6h5" /></svg>,
+  healthy: <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 6.5l2.5 2.5 4.5-5.5" /></svg>,
+  liquidatable: <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M6 1.8l4.6 8H1.4z" /><path d="M6 5v2.2M6 8.8v.1" /></svg>,
+};
+const TEXT: Record<AccountStatus, string> = { no_debt: '无负债', healthy: '健康', liquidatable: '可清算' };
+// 状态色是保留色，永远配图标 + 文字，不单靠颜色传达。
+const KIND: Record<AccountStatus, string> = { no_debt: '', healthy: 'good', liquidatable: 'crit' };
+
+export function StatusBadge({ status }: { status: AccountStatus }) {
+  return <span className={`badge ${KIND[status]}`}>{ICON[status]}{TEXT[status]}</span>;
+}
+
+export function Accounts({ accounts, pool }: { accounts: AccountView[]; pool: PoolView }) {
+  const decimals = Object.fromEntries(pool.banks.map((b) => [b.address, b.decimals]));
+  const list = (items: { bank: string; label: string; amount: string }[]) => items.length
+    ? items.map((i) => <div key={i.bank}>{fmtToken(i.amount, decimals[i.bank] ?? 0)} <span className="muted">{i.label}</span></div>)
+    : <span className="muted">—</span>;
+  return (
+    <div className="card">
+      <h2>账户<small>健康度 = Σ存款×价格×权重 − Σ借款×价格×权重（维持权重，USD）；小于 0 即可被清算</small></h2>
+      <div className="tablewrap"><table>
+        <thead><tr><th>账户</th><th>存款</th><th>借款</th><th className="n">维持健康度</th><th className="n">开仓健康度</th><th>状态</th></tr></thead>
+        <tbody>{accounts.map((a) => (
+          <tr key={a.address}>
+            <td><b>{a.label}</b><div className="muted mono">{short(a.address)}</div></td>
+            <td>{list(a.balances.filter((b) => b.deposit !== '0').map((b) => ({ bank: b.bank, label: b.label, amount: b.deposit })))}</td>
+            <td>{list(a.balances.filter((b) => b.borrow !== '0').map((b) => ({ bank: b.bank, label: b.label, amount: b.borrow })))}</td>
+            <td className="n">{fmtUsd(a.health.maint)}</td>
+            <td className="n">{fmtUsd(a.health.init)}</td>
+            <td><StatusBadge status={a.status} /></td>
+          </tr>))}</tbody>
+      </table></div>
+    </div>
+  );
+}
