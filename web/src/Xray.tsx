@@ -4,6 +4,12 @@ import { api } from './api';
 import { fmtTime, short } from './format';
 
 const color = (i: number) => (i === 0 ? 'var(--ink-3)' : `var(--s${((i - 1) % 8) + 1})`);
+// 交易里也有别的程序的指令(设置算力、SPL Token 转账…)，我们不解码它们，只标出是哪个程序、原始字节是什么。
+const KNOWN: Record<string, string> = {
+  ComputeBudget111111111111111111111111111111: 'Compute Budget(设置算力上限)',
+  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: 'SPL Token',
+  '11111111111111111111111111111111': 'System',
+};
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 const bytes = (hex: string) => hex.match(/.{1,2}/g)?.join(' ') ?? '';
 
@@ -44,6 +50,16 @@ function InstructionBlock({ ix, row }: { ix: XrayInstruction; row: Record<string
   );
 }
 
+function OtherInstruction({ ix }: { ix: XrayInstruction }) {
+  return (
+    <div className="field" style={{ display: 'block' }}>
+      <b>{KNOWN[ix.program] ?? short(ix.program, 6)}</b>
+      <span className="muted"> · 指令 #{ix.ix_index}{ix.inner_index != null ? ` / inner #${ix.inner_index}` : ''} · 不是 marginfi，未解码</span>
+      <div className="mono" style={{ whiteSpace: 'normal', wordBreak: 'break-all', marginTop: 4 }}>{bytes(ix.data_hex)}</div>
+    </div>
+  );
+}
+
 function EventBlock({ ev, row }: { ev: XrayEvent; row: Record<string, unknown> | undefined }) {
   return (
     <div className="block">
@@ -56,6 +72,9 @@ function EventBlock({ ev, row }: { ev: XrayEvent; row: Record<string, unknown> |
     </div>
   );
 }
+
+const rowOf = (view: XrayView, ix: XrayInstruction) =>
+  view.rows.instructions.find((r) => r.ix_index === ix.ix_index && r.inner_index === (ix.inner_index ?? -1));
 
 export function Xray({ signature, onClose }: { signature: string; onClose: () => void }) {
   const [view, setView] = useState<XrayView | null>(null);
@@ -75,9 +94,13 @@ export function Xray({ signature, onClose }: { signature: string; onClose: () =>
         {error && <div className="err">{error}</div>}
         {!view && !error && <div className="muted">加载中…</div>}
         {view && <>
-          {view.instructions.map((ix) => <InstructionBlock key={`${ix.ix_index}:${ix.inner_index}`} ix={ix}
-            row={view.rows.instructions.find((r) => r.ix_index === ix.ix_index && r.inner_index === (ix.inner_index ?? -1))} />)}
+          {/* 有数据库行的才是 marginfi 指令(只有它们会被解码入库)；其余折叠到下面。 */}
+          {view.instructions.filter((ix) => rowOf(view, ix)).map((ix) => <InstructionBlock key={`${ix.ix_index}:${ix.inner_index}`} ix={ix} row={rowOf(view, ix)} />)}
           {view.events.map((ev) => <EventBlock key={ev.log_index} ev={ev} row={view.rows.events.find((r) => r.log_index === ev.log_index)} />)}
+          {view.instructions.some((ix) => !rowOf(view, ix)) && (
+            <details className="data"><summary>其他程序的指令（{view.instructions.filter((ix) => !rowOf(view, ix)).length} 条，未解码）</summary>
+              {view.instructions.filter((ix) => !rowOf(view, ix)).map((ix) => <OtherInstruction key={`${ix.ix_index}:${ix.inner_index}`} ix={ix} />)}
+            </details>)}
           <details className="data"><summary>原始日志（{view.logs.length} 行）</summary><pre className="json">{view.logs.join('\n')}</pre></details>
         </>}
       </aside>

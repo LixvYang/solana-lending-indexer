@@ -21,7 +21,7 @@ export type DecodedInstruction =
   | { name: string; decodeError: string; data: string; rawData?: string; dataEncoding?: 'base58' };
 
 // #region ep4-account-names
-function accountNames(accounts: IdlAccount[]): string[] {
+export function accountNames(accounts: IdlAccount[]): string[] {
   // IDL 分组只组织名称，不占账户槽位；RPC accounts 下标按叶子声明顺序排列。
   return accounts.flatMap(account => account.accounts ? accountNames(account.accounts)
     : [account.name]);

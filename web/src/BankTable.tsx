@@ -1,5 +1,5 @@
 import type { PoolView } from '@contract';
-import { fmtPct, fmtToken, fmtUsd, short } from './format';
+import { fmtPct, fmtToken, fmtUsd, fmtWeight, short } from './format';
 
 export function BankTable({ pool, selected, onSelect }: { pool: PoolView; selected: string | null; onSelect: (bank: string) => void }) {
   return (
@@ -21,7 +21,7 @@ export function BankTable({ pool, selected, onSelect }: { pool: PoolView; select
               <td className="n">{fmtPct(b.utilization)}</td>
               <td className="n">{fmtPct(b.lending_apr)}</td>
               <td className="n">{fmtPct(b.borrowing_apr)}</td>
-              <td className="n">{b.weights.asset_init} / {b.weights.asset_maint}</td>
+              <td className="n">{fmtWeight(b.weights.asset_init)} / {fmtWeight(b.weights.asset_maint)}</td>
             </tr>
           ))}
         </tbody>

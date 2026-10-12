@@ -218,3 +218,81 @@ codex 的 85 项离线测试全部通过，但只有连上真实 Postgres 和真
 - 没有长时间运行、并发、吞吐测试；没有测过 RPC 429 的真实退避。
 - `account_states` 只保存"取快照那一刻的当前状态"，不是逐笔历史；每次运行都会新增一批行(按 `context.slot`)，没有清理策略。关闭账户没有墓碑。
 - 只处理 finalized，不处理重组。
+
+## D-013 M5a 只读 API（2026-10-12，离线验证）
+
+**实现与来源**：不新增依赖，不改 `src/api/types.ts`。node:http 路由只读取 Db；服务启动不迁移、不连接 RPC。
+预言机采集属于 ingest 的 syncStored：由最新可解码 Bank 的 `oracle_keys[0]` 选择地址，owner 白名单先于解码与写库，
+整批 owner/布局错误拒绝写入；缺失账户报告并跳过。默认白名单从仓库根目录 `program/out/program-ids.json` 读取 mocks，
+加 Switchboard devnet 的 `Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2`；文件缺失时只用后者；
+ORACLE_OWNERS 显式设置时覆盖默认集合（空值表示空集合）。PullFeed 3208 字节与 discriminator 严格检查，
+18 位价格保留 i128 分子/分母/十进制以及显示 number；scenario 反向复用唯一偏移表，原有 mock-feed 测试保持通过。
+快照保留 raw_data/context.slot，rebuildDecoded 通过原始 discriminator 重新解码预言机，不把它变成协议 unknown。
+
+**数量与利率**：原生数量使用两个 I80F48 原始 bigint 相乘 / 2^96，向下取整输出字符串。
+利用率由未取整的精确数量比值计算后转 number；有无负债按精确分子判断。USD/健康度用未取整数量到显示边界，
+不累加浮点事件作当前余额。APR 来源为本地上游 `marginfi_group.rs` 223–239、320–334、375–388：
+保险 + group + flag==1 时启用的 group 缓存 program 费，固定/比例分别求和，排除一次性 origination fee。
+group 快照缺失时报错，不能默认 program 费为零。有限利用率显示饱和到 0..1，NaN/Infinity 拒绝；
+上游在 >1 会沿第二段外推，本 API 此范围不声称模拟上游实际 APR。
+
+**价格与状态**：sample_size=0 的未 crank feed 虽解码出 0，视图当作价格缺失。价格缺失则 price/USD 为 null，
+有余额缺价格则 health.init/maint 为 null。无实际债务为 no_debt；有债务且 maint 非负为 healthy，否则 liquidatable。
+当有债务但缺价格时，为遵守现有三态契约，保守返回 liquidatable，同时 health=null；此状态不是实际清算资格证明。
+缺 bank 的账户视图拒绝组装，避免省略仓位。没有价格过期策略，只显示最近已入库价格和时间，不暗示价格仍有效。
+
+**活动与 X 光**：按 slot/ix_index/signature（C 排序）降序分页，默认20、上限100；顶层 marginfi 指令一条一行。
+主事件名称显式匹配，不拿同指令里的计息事件当业务事件；失败交易保留指令但无已发生事件。清算 amount=null。
+事件表缺 inner_index，同一顶层调用的同名事件取最后一条；重复同名 CPI 的精确来源不由活动流承诺。
+X 光列出原始 top/inner 全部指令，protocol 解码取存储行，外部程序 unknown 只展示原文。
+已知 IDL 参数逐字段 spans，unknown/损坏数据保留完整 raw 分段，非法 base58 保留原文与错误。
+日志 base64 使用原始 log_index，数据库 rows 原样返回。404/400 有固定错误体；内部错误只返回固定500消息，
+不记录异常对象/请求 URL/数据库或 RPC 配置。
+
+**离线证据**：清算 pre/post maint 与程序报告的 −750.001780881723 / −701.2517808817221 相差小于1e-6。
+两个 bank 总量、三用户数量逐个对照独立 Anchor snapshots 的有理数，tSOL存款100、tUSDC借款0。
+合成负债覆盖 liquidatable/healthy、缺价格保守状态、不到1原生单位仍有债务；非零精确利用率及 group 费用开关另测。
+32交易的18条顶层指令名称/签名与独立 steps 核对；分页覆盖同slot/ix的不同签名及同slot多个ix，不重不漏。
+borrow/liquidate 的字节重解参数、所有fixture参数的spans、日志base64与原始数据库行一致；变量参数及v0 inner仅合成验证。
+PGlite 验证labels幂等、owner拒绝、raw/context.slot和预言机重建；HTTP直接调用route/handle，覆盖200/400/404/500、
+CORS、真正bigint序列化、连接异常脱敏；新增CLI只运行帮助/非法参数，不连接数据库。
+
+**最终检查**：pnpm typecheck exit=0；pnpm test exit=0，102项通过、0失败、0跳过（新增13项）；git diff --check通过。
+
+**临时实现突变**（逐个确认 exit=1 再恢复）：维持资产权重改成开仓权重（math 1项失败）；
+漏掉固定APR费用（math 1项失败）；maint状态判断反向（queries 1项失败）；spans少遍历最后一个IDL字段（xray 2项失败）。
+这四次是源代码破坏验证，不把损坏输入或初始缺模块导致的失败当成突变捕获。
+
+**额外运行时异常**：一次格式整理后的全套重跑，queries.test.ts 的前两项通过，随后 Node v24.10.0 原生V8崩溃 `Check failed: end > addr`（ThreadIsolation / FreeCode / WasmImportWrapperCache 栈）；该轮101通过、1个文件失败，未显示业务断言失败。该文件单独复跑3项通过，其他完整轮也曾102项通过。没有更换Node/依赖或关闭WASM优化；根因未定位，不能声称该原生问题已修复。
+
+**未运行 / 不确定性**：没有联网、调用真实RPC、发送交易、重跑剧本、构建/部署、启动Docker/Postgres或git提交。
+没有启动API socket、运行两个新CLI的正常pg路径、真实003迁移/标签导入、浏览器/前端联调、长时服务、并发/吞吐验证。
+预言机价格快照为scenario构造的合成账户，不是新增真实crank结果；已安装依赖的bigint原生绑定不可用，沿用纯JS回退。
+各地址最新快照可能来自不同slot，as_of_slot仅最大值；多次SELECT在并发写库时可能看到不同提交，没有跨查询快照隔离。
+旧快照无关闭墓碑，不证明当前账户存在。M3未分摊的利息/ceil/f64限制仍成立。
+健康度仅实现任务规定的点价格/权重公式，没有重演oracle置信区间、init资产价值上限、隔离风险层等通用链上风险规则；
+本fixture验证不能证明其他协议配置下的实际清算资格。
+
+**对未修改契约的异议**：
+- AccountStatus缺unknown/no_price，导致缺价格时只能借用liquidatable；建议新增独立未知状态。
+- BankView利用率限定0..1，无法忠实表示借款超过存款的状态与上游外推APR；建议同时保留未裁剪比值。
+- AccountView注释声称与程序健康度“逐位”一致，但number与f64事件只允许误差内匹配；应改成明确容差。
+- as_of_slot最大值和单一group无法表达混合采样/多个group；价格契约也缺owner/provider/mock与过期状态。
+  当前多group时group=null；暂不改契约，由维护者与前端协调。
+
+### D-013 真实联调补充(2026-10-13,真实 Postgres + 前端 + 真实 devnet 数据)
+
+codex 的 102 项离线测试通过后,接上真实数据库和前端联调,又发现 **四处** 离线测试没覆盖到的问题,均已修复并各补了回归测试:
+
+1. **JSONB 不保留键顺序**:`instructions.accounts` 存成 JSONB 后,键被按长度再按字节序重排,X 光里清算指令的账户顺序变成 `group, signer, liab_bank…`,而链上位置是有语义的。修复:API 输出前按 IDL 声明顺序重排(账户与参数)。**数据库里存的 JSONB 行本身仍是被重排的顺序**,X 光第三栏如实展示它——这本身是一个值得在视频里讲的点:要保序就存数组。
+2. **清算行代币为空**:清算事件没有 `bank` 字段,只有 `asset_bank` / `liability_bank`。活动流这一行改取 `asset_bank`(被清算资产所在的 bank)。
+3. **标签不一致**:bank 地址的标签曾是 `bank tUSDC`,池子表里是 `tUSDC`。统一用代币符号。
+4. **非 marginfi 指令**:交易里还有 ComputeBudget 与 SPL Token 的指令,被标成 `unknown`。X 光里只把有数据库行的 marginfi 指令展开,其余折叠并标注程序名与"未解码"。
+
+**契约修改(采纳 codex 的异议)**:`AccountStatus` 增加 `unknown`——有负债但缺价格时无法判断健康度,既不能说健康也不能说可清算。此前 API 只能保守返回 `liquidatable`,会误导。
+
+**联调数字**(真实 devnet 数据,剧本之后):tSOL 存款 100、tUSDC 存款 14,512.501895(= Alice 9,000.001546 + Carol 5,512.500349),借款 0,价格 $50 / $1,总存款 $19,512.50;三个账户均为 `no_debt`;活动 18 行,分页遍历 18 条无重复;不存在的签名 404、非法参数 400。
+
+**已知不稳定**:codex 报告过一次 Node/V8 的 WebAssembly 原生崩溃(PGlite),我连跑 6 次完整测试出现过 1 次 `tail.test.ts` 失败、单独复跑通过,根因未定位。若在 CI 中复现,先考虑降低测试并发。
+
+**未验证**:没有压测;没有验证 API 在 Postgres 连接断开时的行为;价格新鲜度(`price_updated_at` 已返回,前端尚未对过期价格做提示);`unknown` 状态只有单元测试,真实数据里没出现过。

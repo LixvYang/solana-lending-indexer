@@ -18,4 +18,7 @@
 | ingest-options.ts | 参数 | 无副作用验证模式、once、from |
 | store-command.ts | 生命周期 | pg 连接关闭、迁移路径、错误退出 |
 
+| load-labels.ts | 元数据入口 | 迁移后导入本地剧本标签，无 RPC |
+| serve-api.ts | 只读服务 | node:http 默认 8787、六个 GET 路由，无 RPC |
+
 SYNC: 增删脚本或改变职责时更新此表与文件头部。

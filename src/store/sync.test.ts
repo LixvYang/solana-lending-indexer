@@ -29,7 +29,7 @@ test('CLI shared sync decodes then snapshots only successful protocol roles; rep
     const closed = Object.keys(known).find(address => address !== 'never-created' && known[address].data.length > 3000)!;
     const rpc = { getMultipleAccounts: async (addresses: string[]) => {
       assert.ok(!addresses.includes('never-created'));
-      return { context: { slot: 42 }, value: addresses.map(address => address === closed ? null : { ...known[address], data: [known[address].data, 'base64'] as [string, 'base64'] }) };
+      return { context: { slot: 42 }, value: addresses.map(address => address === closed ? null : !known[address] ? null : { ...known[address], data: [known[address].data, 'base64'] as [string, 'base64'] }) };
     } };
     const result = await syncStored(db, rpc, marginfiIdl);
     assert.equal(result.decoded, 33); assert.equal(result.snapshots, 5);

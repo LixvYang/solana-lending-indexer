@@ -1,3 +1,4 @@
+/** INPUT: mock 价格、共用 PullFeed 偏移、剧本 Context。 OUTPUT: 构造/写入价格区。 POSITION: EP3 mock 剧本。 SYNC: 同步 folder.md。 */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -13,12 +14,8 @@ import { SWITCHBOARD_QUEUE } from './switchboard-client';
 // 账户内容与真实 PullFeedAccountData 逐字节同布局，价格由我们通过 mocks 的 write 指令写入。
 // marginfi 走的仍然是 SwitchboardPull 的解析路径，只是 "crank" 换成了我们自己写。
 
-export const FEED_SIZE = 3208;
-// 偏移含 8 字节判别式。来源：switchboard-on-demand 0.1.14 的 PullFeedAccountData(repr(C))，
-// 并用 fixtures/switchboard-pullfeed-uncranked.bin(链上真实账户)校验过，见 mock-feed.test.ts。
-export const OFFSET = { authority: 2056, queue: 2088, feedHash: 2120, minResponses: 2176, name: 2180,
-  sampleSize: 2215, result: 2264, maxStaleness: 2392 } as const;
-export const DISCRIMINATOR = Buffer.from([196, 27, 108, 196, 10, 215, 219, 40]);
+import { FEED_SIZE, OFFSET, DISCRIMINATOR } from '../../src/decoder/switchboard';
+export { FEED_SIZE, OFFSET, DISCRIMINATOR } from '../../src/decoder/switchboard';
 const PRICES = new Map<Token, number>();
 
 export function mocksProgram(): PublicKey {

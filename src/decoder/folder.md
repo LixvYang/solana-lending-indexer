@@ -33,4 +33,7 @@ M2/M3：原始指令、日志、账户字节 → 按 IDL 还原字段与调用�
 
 | version.ts | 重放版本 | DECODER_VERSION=1；布局变化时递增，旧 raw_tx 重做 |
 
+| switchboard.ts | 预言机 | PullFeed 唯一偏移表、严格布局、精确 18 位价格与显示数 |
+| switchboard.test.ts | 测试 | 真实未 crank fixture、合成价格、时间/slot 与无效布局 |
+
 SYNC: 增删文件或改变职责时更新此表与文件头部。

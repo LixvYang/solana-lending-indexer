@@ -11,7 +11,8 @@
 | M2 | 指令解码器 | EP4 | done | 2026-10-12：手写 base58 / Reader / IDL Borsh、账户角色、顶层与 inner 指令及离线 CLI；32 笔 fixture 中的 18 条指令与 Anchor 一致；另有对全部 23 个带参数指令的 Anchor 编码往返测试(合成数据)；typecheck 通过，36 项测试通过。非空 v0 地址表与 marginfi CPI 仅合成测试，未联网或发送交易；fixture 之外的指令没有链上样本 |
 | M3 | 事件 / inner instruction / 账户状态解码 | EP5 | done | 2026-10-12：离线日志栈、IDL C 布局、I80F48 与账户解码、精确对账及两个 CLI；32 笔/25 事件、7 账户与 Anchor 对照通过；四种实现突变捕获并还原。差值实测及归因限制见 D-011；未联网、发送交易或提交 git |
 | M4 | 数据库与幂等入库、回填、游标 | EP6 | done | 离线 89 项测试 + 真实 Postgres/Helius devnet 验收(D-012):清库重跑 md5 一致、读回对账 issues=[]；真实环境另发现并修复 4 个问题 |
-| M5 | API + 前端(含 X 光面板) | EP7 | todo | |
+| M5 | API + 前端(含 X 光面板) | EP7 | done | 后端 + 前端已用真实 Postgres/devnet 数据联调并截图检查(浅/深色);联调另发现并修复 4 个问题,见 D-013 |
+| M5a | 只读 API、预言机快照、labels、健康/利率/活动/X 光 | EP7 后端 | done | 2026-10-12:离线 PGlite / fixture / 无 socket HTTP 验证;四处源代码突变捕获并还原;2026-10-13 真实联调修复 4 处(D-013),契约新增 AccountStatus.unknown;104 项测试 |
 | M6 | 按章节整理提交历史、打 tag、写 docs 与 video 分镜 | 全部 | todo | |
 
 ## 已完成
@@ -28,9 +29,11 @@
 
 - 2026-10-12:M4 完成并在真实 Postgres + Helius devnet 上验收(D-012)：离线测试之外另发现并修复 4 个只有真实环境才暴露的问题。
 
+- 2026-10-13:M5 完成。真实 Postgres + devnet 数据 + 前端联调通过(页面截图检查,浅/深色);测试 104 项。
+
 ## 下一步
 
-1. M5：基于 M4 的派生表实现只读 API/前端；真实 Postgres 与 RPC 集成仍待验证。M3 保留 f64 差值，未修改 expected。
+1. M5b 前端与 M5a API 联调；M5a 的真实 pg 迁移/新 CLI 正常路径、HTTP socket 和浏览器验收尚未运行。M3 保留 f64 差值，未修改 expected。
 2. 验证新 `--run-id` 重跑得到结构一致的结果。
 3. 监控 Switchboard devnet oracle,恢复后评估切回。
 
@@ -64,3 +67,16 @@
 - 四种临时破坏突变均捕获：去掉ON CONFLICT、移除slot事务、同时漏清events全量和逐签名两处、去掉owner检查；各针对性测试退出1（1项失败）后还原。单独删全量events清理测试仍通过，因逐签名清理等效，此突变不计捕获。另临时DECODER_VERSION=2/旧行=1升级测试退出0，还原版本1。
 - 未联网、调用真实RPC/Helius、运行剧本/部署/发送交易、启动Docker/Postgres或提交git。真实pg迁移、真实CLI正常采集/reindex、RPC重试/跳slot行为、历史保留、长时tail、并发/吞吐均未验收。CLI子进程只运行帮助和非法参数；正常编排由PGlite/假RPC执行。
 - 不确定性：真实服务端/驱动集成仍待验证；当前账户快照不能冒充逐笔历史，关闭账户无墓碑，旧快照不证明当前存在。M3的利息/f64/ceil分摊未被M4消除。
+
+
+## M5a 离线验收（2026-10-12）
+
+- 最终 `pnpm typecheck` exit=0；`pnpm test` exit=0：102项通过、0失败、0跳过；M5a新增13项。依赖提示bigint原生绑定不可用，沿用已有纯JavaScript回退，未重装/重建依赖。
+
+- 实现 PullFeed 精确解码、唯一偏移表、owner 白名单预言机快照与重建、labels 迁移/导入；API 提供池子/曲线/账户/活动/X 光/health 六个 GET 路由，不连 RPC；不改依赖和 src/api/types.ts。README、模块清单、EP7 与 D-013 已同步。
+- 精确 bigint 原生数量对照两个 bank 与三位用户的 Anchor snapshots；tSOL 总存款 100、tUSDC 借款 0。Bob 清算前后 maint 与事件程序报告差 <1e-6。group 费用开关、非零精确利用率、合成未还债/healthy/缺价格/微量债务已测。
+- 32 fixture 的18条顶层指令与独立 steps/event 对照；分页包含同slot同ix的签名平局及同slot多ix，无重漏。borrow/liquidate X 光原始字节、参数、base64日志与数据库行互相对照；全部fixture参数spans及变量参数/合成v0 inner已测。
+- 四次临时实现突变均捕获并还原：maint资产权重换init（1项失败）、漏固定APR费（1项失败）、status判断反向（1项失败）、spans少最后IDL字段（2项失败）；针对测试均exit=1。
+- 一次全套重跑在 `src/api/queries.test.ts` 第三项前原生崩溃：Node v24.10.0 / V8 `Check failed: end > addr`，栈位于 WebAssembly JIT 页释放；该轮101通过、1个文件失败。单独复跑queries三项通过。未改依赖/测试启动参数；崩溃原因未确定，不把复跑成功视为已修复原生问题。
+- 新CLI只实际运行帮助/非法参数；route/handle使用无socket替身，PGlite验证SQL。没有联网、调用真实RPC、发送交易、重跑剧本、构建部署、启动Docker/Postgres、API监听或浏览器/前端联调，没有git提交。
+- 不确定性与契约异议：缺价格状态借用liquidatable（health=null，不证明可清算）；利用率显示裁剪；number健康只验证容差；快照混合slot、无新鲜度/关闭墓碑/并发一致性保证；通用上游风险规则未重演。详见D-013。

@@ -83,7 +83,8 @@ export interface BalanceView {
   borrow_usd: number | null;
 }
 
-export type AccountStatus = 'no_debt' | 'healthy' | 'liquidatable';
+/** unknown：有负债但缺价格，无法判断健康度——不能当作可清算，也不能当作健康。 */
+export type AccountStatus = 'no_debt' | 'healthy' | 'liquidatable' | 'unknown';
 
 export interface AccountView {
   address: string;
@@ -111,6 +112,7 @@ export interface ActivityItem {
   event: string | null;
   account: string | null;
   account_label: string | null;
+  /** 清算取被清算资产所在的 bank(asset_bank)。 */
   bank: string | null;
   bank_label: string | null;
   /** 原生单位；清算等用 f64 的事件为 null。 */

@@ -7,4 +7,6 @@
 | 001_raw_tx.sql | 事实 schema | 原始交易及 blocks 游标 |
 | 002_decoded.sql | 派生 schema | 解码版本、指令/事件/账户快照、查询索引 |
 
-SYNC: 更改 schema 时同步此表、EP6 与 D-012。
+| 003_labels.sql | 元数据 schema | 链下地址标签，不猜测链上代币名称 |
+
+SYNC: 更改 schema 时同步此表、EP6/EP7 与 D-012/D-013。

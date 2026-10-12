@@ -26,6 +26,11 @@ M3 已实现日志事件、IDL 计算的 zero_copy 账户布局、精确 I80F48 
 
 M4 提供 `pnpm migrate`、`pnpm ingest --backfill`、`pnpm ingest --tail --once --from <slot>` 和 `pnpm reindex`。采集命令需要 `RPC_URL`，数据库默认连接 `localhost:5433`；`reindex` 从 raw_tx 和保留原始字节的账户快照重建，不调用 RPC。所有新数据库测试使用进程内 PGlite，真实 Postgres / Helius 尚未实测；运行方式与事务边界见 [EP6](docs/chapters/ep06-storage.md) 和 [D-012](docs/decisions.md#d-012-m4-存储与-finalized-采集2026-10-12)。
 
+M5a 已提供只读 API：先运行 `pnpm migrate`、`pnpm exec node --import tsx scripts/load-labels.ts`，
+再用 `pnpm exec node --import tsx scripts/serve-api.ts` 启动本地 8787 服务（PORT 可配置）。
+池子/账户以最新账户快照为准，预言机价格由 ingest 采集，API 不连 RPC；健康度、利率、稳定分页和 X 光经 PGlite 离线测试。
+运行方式、缺价格语义与验证边界见 [EP7](docs/chapters/ep07-frontend.md) 和 D-013。本次未启动真实 API 服务或前端。
+
 代码变化时同步本 README、相关 `folder.md` 与文件头部的 INPUT / OUTPUT / POSITION 注释。
 
 ## 章节
