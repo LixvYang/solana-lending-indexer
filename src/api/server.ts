@@ -5,7 +5,7 @@ import { toJson } from '../store/json';
 import { decodeBase58 } from '../core/base58';
 import { getPool, getAccounts, getRateCurve, getActivity, getXray } from './queries';
 import { ApiError } from './errors';
-import { readJson, corsHeaders } from './http-body';
+import { readJson, corsHeaders, allowOrigin } from './http-body';
 import { buildTransaction, PriceStale } from './builder';
 import { sendTransaction } from './send';
 import { getWallet } from './wallet';
@@ -111,6 +111,8 @@ export async function handle(db: Db, req: IncomingMessage, res: ServerResponse, 
   }
   for (const [key, value] of Object.entries(result.headers))
     res.setHeader(key, value);
+  res.setHeader('Access-Control-Allow-Origin', allowOrigin(req.headers?.origin));
+  res.setHeader('Vary', 'Origin');
   res.statusCode = result.status;
   res.end(result.body);
 }

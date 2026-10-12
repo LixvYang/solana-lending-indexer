@@ -1,6 +1,6 @@
 /** INPUT: JSON 请求与专用水龙头服务。 OUTPUT: /faucet HTTP。 POSITION: 独立 EP8 服务边界。 SYNC: folder.md。 */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readJson, corsHeaders } from '../api/http-body';
+import { readJson, corsHeaders, allowOrigin } from '../api/http-body';
 import { ApiError } from '../api/errors';
 import { FaucetLimit } from './service';
 import type { FaucetResponse } from '../api/types';
@@ -25,6 +25,7 @@ export async function handleFaucet(req: IncomingMessage, res: ServerResponse, gr
     req.socket?.remoteAddress ?? 'unknown', grant); }
   catch (error) { result = faucetFailure(error); }
   for (const [key, value] of Object.entries(result.headers)) res.setHeader(key, value);
+  res.setHeader('Access-Control-Allow-Origin', allowOrigin(req.headers?.origin)); res.setHeader('Vary', 'Origin');
   res.statusCode = result.status; res.end(result.body);
 }
 export const createFaucetServer = (grant: FaucetHandler) => createServer((req, res) => { void handleFaucet(req, res, grant); });

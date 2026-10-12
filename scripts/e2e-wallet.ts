@@ -18,7 +18,8 @@ import type { BuildResponse, PoolView, SendResponse, WalletView } from "../src/a
 const API = process.env.API_URL ?? "http://localhost:8787";
 const FAUCET = process.env.FAUCET_URL ?? "http://localhost:8788/faucet";
 const rpc = process.env.RPC_URL!;
-const connection = new Connection(rpc, "confirmed");
+// 给每个 RPC 请求 20 秒超时:免费 RPC 限流时请求可能一直挂着,脚本不能跟着卡死。
+const connection = new Connection(rpc, { commitment: "confirmed", fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(20_000) }) });
 
 async function http<T>(url: string, body?: unknown): Promise<T> {
   const response = await fetch(url, body === undefined ? undefined : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -85,4 +86,6 @@ async function http<T>(url: string, body?: unknown): Promise<T> {
   await step("8. 取出全部 tSOL(withdraw_all)", { action: "withdraw", bank: tSOL.address, amount: "0", all: true });
   await show(account);
   console.log("\n✓ 端到端通过。新钱包的 marginfi 账户:", account);
+  // sendAndConfirmTransaction 会开 WebSocket 订阅,不主动退出的话进程会一直挂着。
+  process.exit(0);
 })().catch((error) => { console.error("\n✗", String(error?.message ?? error).replace(/api-key=[^\s&"']+/g, "api-key=***")); process.exit(1); });

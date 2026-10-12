@@ -17,3 +17,14 @@ export async function readJson(req: IncomingMessage): Promise<unknown> {
 }
 export const corsHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': 'http://localhost:5173',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
+
+/**
+ * 跨域放行名单:浏览器页面来自哪个 Origin,就只在它属于名单时才回显它。
+ * 为什么不写死 localhost:同一台机器上 `localhost` 与 `127.0.0.1` 是两个不同的 Origin,
+ * 用后者打开页面时跨域请求(水龙头在另一个端口)会被浏览器拦下,而 `/api` 走同源代理看不出问题。
+ * 可用环境变量 CORS_ORIGINS(逗号分隔)追加。名单之外的 Origin 得到默认值,浏览器会拒绝它。
+ */
+const ALLOWED_ORIGINS = new Set(['http://localhost:5173', 'http://127.0.0.1:5173',
+  ...(process.env.CORS_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean) ?? [])]);
+export const allowOrigin = (origin: string | string[] | undefined): string =>
+  typeof origin === 'string' && ALLOWED_ORIGINS.has(origin) ? origin : 'http://localhost:5173';

@@ -62,7 +62,9 @@ export function WalletPanel({ banks, accounts }: { banks: BankView[]; accounts: 
     setBusy('领取中…'); setFaucetNote(null);
     try {
       const r = await chain.faucet(info.data.faucet_url, address);
-      setFaucetNote(`已到账:${r.granted.map((g) => `${g.amount} ${g.label}`).join('、')}`);
+      // 水龙头返回的是原生单位，换成人能读的数量。
+      const human = r.granted.map((g) => `${fmtToken(g.amount, info.data?.tokens.find((t) => t.label === g.label)?.decimals ?? 0)} ${g.label}`);
+      setFaucetNote(`已到账:${human.join('、')}`);
     } catch (e) { setFaucetNote(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
   };

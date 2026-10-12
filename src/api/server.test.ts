@@ -39,3 +39,13 @@ test('new CLI help and invalid arguments run offline; HTTP serializes actual big
  const bigintDb:Db={query:async <T extends Record<string,unknown>>(sql:string)=>({rows:(sql.includes('raw_tx')?[{signature,slot:9007199254740993n,block_time:null,err:{large:9007199254740993n},tx:{transaction:{signatures:[signature],message:{accountKeys:[],instructions:[]}},meta:{logMessages:[]}}}]:[]) as unknown as T[],rowCount:sql.includes('raw_tx')?1:0}),transaction:async fn=>fn(bigintDb)};
  const response=await route(bigintDb,'GET',`/api/tx/${signature}`);assert.equal(response.status,200);assert.equal(JSON.parse(response.body).err.large,'9007199254740993');
 });
+
+// 真实联调时发现:页面用 127.0.0.1 打开时,水龙头(另一个端口)的跨域请求被浏览器拦下，
+// 因为 Access-Control-Allow-Origin 写死了 localhost。
+import { allowOrigin } from './http-body';
+test('CORS 按 Origin 匹配白名单:localhost 与 127.0.0.1 都放行,陌生 Origin 得不到回显', () => {
+  assert.equal(allowOrigin('http://127.0.0.1:5173'), 'http://127.0.0.1:5173');
+  assert.equal(allowOrigin('http://localhost:5173'), 'http://localhost:5173');
+  assert.equal(allowOrigin('https://evil.example'), 'http://localhost:5173'); // 默认值,与来者不同,浏览器会拒绝
+  assert.equal(allowOrigin(undefined), 'http://localhost:5173');
+});
