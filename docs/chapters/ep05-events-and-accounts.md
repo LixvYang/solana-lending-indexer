@@ -1,78 +1,223 @@
 # EP5 解析事件与账户状态
 
-状态：M3 离线完成（2026-10-12）；实测数字、推断与未验证项见 [D-011](../decisions.md#d-011-m3-事件zero_copy-账户与精确对账离线实测2026-10-12)。
+## 本集要回答的问题
 
-## 本章要回答的一个问题
+事件告诉我们"发生了什么",账户状态告诉我们"现在是什么"。**池子的存款、借款、利用率,为什么要以状态为准,而不是把事件加起来?**
 
-事件告诉我们“发生了什么”，账户状态告诉我们“现在是什么”。为什么池子指标必须以状态为准？因为普通事件不含逐账户利息，清算事件又损失定点精度并漏报部分余额；事件净流量与结束余额确实不同。
+## 三个概念
 
-## 概念
+**1. 事件在日志里,要看调用栈。** Anchor 的 `emit!` 把事件写成一行日志 `Program data: <base64>`。解码:base64 → 前 8 字节是事件的 discriminator(`sha256("event:<名字>")` 前 8 字节)→ 其余按 Borsh 解。
 
-1. **日志调用栈**：顶层 `invoke [1]` 增加指令下标；CPI `invoke [2]` 进入子程序，`success` / `failed` 出栈。只有栈顶等于 IDL 的 marginfi 地址，`Program data:` 才归它。不要从日志文本猜归属。失败交易回滚，即使日志已有事件也不入活动流。
-2. **Borsh vs zero_copy**：事件是 `[8 字节 discriminator][连续 Borsh 字段]`；账户是 `[8 字节 discriminator][repr(C) 成员与 padding]`。公钥大小 32、对齐 1；u64 大小/对齐 8；WrappedI80F48 大小 16，却因 `repr.align=8` 按 8 对齐。数组 stride 包含元素尾部 padding。
-3. **份额 vs 数量**：I80F48 位数为 `有符号 i128 / 2^48`；数量为 `shares位数 × share_value位数 / 2^96`。不经过 Number。事件中的 f64 已经舍入，只能保留其 binary64 真值，无法恢复丢失的 I80F48 位。
+但一笔交易的日志里可能夹着**别的程序**的 `Program data:`。归属不能靠猜,要看 `invoke [n]` / `success` / `failed` 维护一个调用栈,**只有栈顶是 marginfi 的时候出现的才算它的**。失败的交易会整体回滚,即使日志里有事件也不能算数。
+
+**2. 账户不是 Borsh,是 `zero_copy`。** 事件是紧凑的 Borsh;但 marginfi 的 `Bank`、`MarginfiAccount`、`MarginfiGroup` 是 **`repr(C)` 的 `zero_copy` 结构**:字段按固定偏移和**对齐**摆放,字段之间有 padding。
+
+- `pubkey`:32 字节,对齐 1
+- `u64`:8 字节,对齐 8
+- `WrappedI80F48`:16 字节,但因为 `repr(align = 8)`,按 **8** 对齐(而不是 i128 通常的 16)
+
+所以偏移不能靠加加减减口算,要**由 IDL 算出来**,再用真实账户的字节长度验证:`Bank` 1856 字节、`MarginfiAccount` 2304、`MarginfiGroup` 1056、`FeeState` 256,各加 8 字节 discriminator,正好等于链上账户的长度。
+
+**3. 定点数。** 份额和份额价值是 `WrappedI80F48`:一个 128 位有符号整数,**低 48 位是小数**,存成 16 字节小端。
+
+```
+真实值 = 有符号整数 / 2^48
+数量   = 份额的整数 × 份额价值的整数 / 2^96
+```
 
 ## 代码走读
 
-事件 discriminator 由 IDL `events[]` 匹配，字段用 Borsh；未知事件保留原始 base64，损坏事件保留 `decodeError`。
+### 事件:从日志里找回来
 
-{{ snippet src/decoder/event.ts#ep5-event-parse }}
+<!-- snippet: src/decoder/event.ts#ep5-log-stack -->
+```ts
+const stack: string[] = [];
+let ixIndex = -1;
+for (const [logIndex, log] of logs.entries()) {
+  if (log === 'Log truncated') break;
+  const invoke = /^Program (\S+) invoke \[(\d+)\]$/.exec(log);
+  if (invoke) {
+    const depth = Number(invoke[2]);
+    if (depth === 1) ixIndex++;
+    stack.length = depth - 1; stack.push(invoke[1]);
+    continue;
+  }
+  const exit = /^Program (\S+) (?:success|failed:.*)$/.exec(log);
+  if (exit) {
+    if (stack.at(-1) === exit[1]) stack.pop();
+    continue;
+  }
+  if (stack.at(-1) !== idl.address || !log.startsWith('Program data: ')) continue;
+  result.events.push({ signature: rpcTx.transaction.signatures[0], ixIndex, logIndex,
+    ...decodeData(log.slice('Program data: '.length), idl) });
+}
+```
+<!-- /snippet -->
 
-调用栈与顶层归属。`decodeEvents` 返回 `{ events, truncated }`：截断是交易级元数据，即使没有事件也保留；遇到运行时 `Log truncated` 后停止消费日志。
+<!-- snippet: src/decoder/event.ts#ep5-event-parse -->
+```ts
+function decodeData(encoded: string, idl: Idl) {
+  let name = 'unknown';
+  try {
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw new Error('invalid base64');
+    const bytes = Buffer.from(encoded, 'base64');
+    if (bytes.length < 8) throw new Error('need 8 event discriminator bytes');
+    const discriminator = bytes.subarray(0, 8).toString('hex');
+    const entry = idl.events?.find(e => Buffer.from(e.discriminator).equals(bytes.subarray(0, 8)));
+    if (!entry) return { name, data: encoded, discriminator };
+    name = entry.name;
+    const reader = new Reader(bytes.subarray(8));
+    const data = decodeType({ defined: { name } }, reader, idl) as Record<string, unknown>;
+    if (reader.remaining) throw new Error(`trailing event bytes: ${reader.remaining}`);
+    return { name, data };
+  } catch (error) {
+    return { name, data: encoded, decodeError: error instanceof Error ? error.message : String(error) };
+  }
+}
+```
+<!-- /snippet -->
 
-{{ snippet src/decoder/event.ts#ep5-log-stack }}
+### 账户:布局由 IDL 算出
 
-账户按 IDL 动态计算布局，无硬编码偏移表。以下 offset 从结构体起点算，定位原始账户字段时还要加 8。
+<!-- snippet: src/decoder/layout.ts#ep5-layout -->
+```ts
+export function layout(type: IdlType | string, idl: Idl): Layout {
+  if (typeof type === 'object') {
+    if ('array' in type) {
+      const element = layout(type.array[0], idl);
+      return { size: element.size * type.array[1], align: element.align };
+    }
+    if ('defined' in type) return layout(type.defined.name, idl);
+    throw new Error('zero_copy requires a fixed size type');
+  }
+  if (type === 'pubkey') return { size: 32, align: 1 };
+  if (type === 'bool') return { size: 1, align: 1 };
+  if (/^[uif](8|16|32|64|128)$/.test(type)) {
+    const size = Number(type.slice(1)) / 8;
+    return { size, align: size };
+  }
+  const definition = idl.types?.find(entry => entry.name === type);
+  if (!definition) throw new Error(`undefined fixed layout type: ${type}`);
+  if (definition.type.kind === 'enum') {
+    if (definition.type.variants.some(v => v.fields?.length)) throw new Error(`enum with fields is not a fixed layout: ${type}`);
+    // 此固定版本的无字段枚举按 u8；账户 fixture 与 Anchor 字段对照验证。
+    return { size: 1, align: 1 };
+  }
+  if (definition.repr?.kind !== 'c') throw new Error(`not repr(C): ${type}`);
+  let end = 0, align = definition.repr.align ?? 1;
+  // #region ep5-padding
+  const fields = (definition.type.fields ?? []).map((field, index) => {
+    const named = typeof field === 'object' && 'name' in field;
+    const fieldType = named ? field.type : field as IdlType;
+    const child = layout(fieldType, idl), previousEnd = end;
+    // 字段必须从自身对齐的倍数开始；显式 _pad 字段之外仍可能有隐式空隙。
+    const offset = alignUp(end, child.align);
+    end = offset + child.size; align = Math.max(align, child.align);
+    return { ...child, name: named ? field.name : String(index), type: fieldType,
+      offset, previousEnd, padding: offset - previousEnd };
+  });
+  // 尾部也补齐，保证数组中下一个结构体仍符合对齐。
+  return { size: alignUp(end, align), align, fields, tailPadding: alignUp(end, align) - end };
+```
+<!-- /snippet -->
 
-{{ snippet src/decoder/layout.ts#ep5-layout }}
+padding 就是这样出现的——下一个字段要对齐到它自己的倍数,中间的空隙就是 padding:
 
-padding 有两种：IDL 的 `_pad` / `_padding` 是真实字段；编译器为成员/尾部对齐补的空隙不算字段。固定账户里大量 padding 已显式写出，隐式补齐用合成结构测试，不要把所有空字节说成编译器自动插入。
+<!-- snippet: src/decoder/layout.ts#ep5-padding -->
+```ts
+const fields = (definition.type.fields ?? []).map((field, index) => {
+  const named = typeof field === 'object' && 'name' in field;
+  const fieldType = named ? field.type : field as IdlType;
+  const child = layout(fieldType, idl), previousEnd = end;
+  // 字段必须从自身对齐的倍数开始；显式 _pad 字段之外仍可能有隐式空隙。
+  const offset = alignUp(end, child.align);
+  end = offset + child.size; align = Math.max(align, child.align);
+  return { ...child, name: named ? field.name : String(index), type: fieldType,
+    offset, previousEnd, padding: offset - previousEnd };
+});
+// 尾部也补齐，保证数组中下一个结构体仍符合对齐。
+return { size: alignUp(end, align), align, fields, tailPadding: alignUp(end, align) - end };
+```
+<!-- /snippet -->
 
-{{ snippet src/decoder/layout.ts#ep5-padding }}
-
-精确显示：分母 `2^48` 对应最多 48 位十进制小数，负号由二补码解析得到。
-
-{{ snippet src/core/fixed.ts#ep5-fixed }}
-
-对账先断言 shares 原始位数，再计算数量有理数。`event-balances.ts` 将 u64 净流量与 f64 清算调整分开；`reconcile.ts` 保留差值和来源分类，报告无法解释的方向/量级。
-
-{{ snippet src/decoder/reconcile.ts#ep5-reconcile }}
-
-## 运行与验证
-
-全部命令离线，不需要 RPC、钱包、Postgres。
+想亲眼看一遍偏移表:
 
 ```bash
-pnpm exec node --import tsx scripts/print-layout.ts Bank
-pnpm exec node --import tsx scripts/print-layout.ts FeeState
-pnpm exec node --import tsx scripts/decode-account.ts F99hSfDM9ymMiMshg38uKWRpXtmZ7rSKVX5F1aHkjWTb
-pnpm typecheck
-pnpm test
+pnpm exec tsx scripts/print-layout.ts Bank
 ```
 
-预期：Bank `size=1856 align=8`，FeeState `size=256 align=8`；布局表含 offset / size / align / previousEnd / padding 及 tailPadding。账户 CLI 输出 `name: Bank` 和 snake_case 字段，所有整数序列化为字符串，WrappedI80F48 输出原始 `value` 字节与精确 `decimal`。账户字节长度必须严格等于布局大小加 8，未知 discriminator 不抛错。解码器仅收到字节，owner 必须由未来调用者核对。
+### 定点数:全程不碰 Number
 
-测试对照 32 笔交易的 **25 条**事件与运行时 Anchor EventParser、七份账户所有字段与测试专用 Anchor coder。任务文件的 24 条与 fixture 不符，实测更正见 D-011。两个池子的四个 shares 不变量、四个 active 组合的数量分子均精确通过。
+<!-- snippet: src/core/fixed.ts#ep5-fixed -->
+```ts
+export function toRational(bytes: Uint8Array) {
+  if (bytes.length !== 16) throw new Error(`I80F48 needs 16 bytes, got ${bytes.length}`);
+  return { numerator: new Reader(bytes).i128(), denominator: 2n ** 48n };
+}
+export function toDecimal(bytes: Uint8Array): string {
+  const { numerator, denominator } = toRational(bytes);
+  const absolute = numerator < 0n ? -numerator : numerator;
+  // 1 / 2^48 = 5^48 / 10^48，小数最多 48 位，整个过程没有浮点舍入。
+  const fraction = ((absolute % denominator) * 5n ** 48n).toString().padStart(48, '0').replace(/0+$/, '');
+  return `${numerator < 0n ? '-' : ''}${absolute / denominator}${fraction ? `.${fraction}` : ''}`;
+}
+```
+<!-- /snippet -->
 
-| 账户 / 池子 | 存款差（原生单位，显示约值） | 借款差（原生单位） |
-|---|---:|---:|
-| Alice / tUSDC | +1546.589030384 | 0 |
-| Bob / tUSDC | 0 | +2176.00000095367431640625 |
-| Carol / tUSDC | +348.538911789 | 0 |
-| Alice / tSOL | 0 | 0 |
-| Bob / tSOL | 0 | 0 |
-| Carol / tSOL | 0 | 0 |
+## JS 里为什么不能直接用 Number
 
-差为“状态减事件净流量（含清算调整）”，不是 decoder 错误。三个正差符合最终 share value 的利息方向与上界；Bob 还包含 repay_all 的 ceil，Carol 清算存款消耗按 39/38 推算。代码保留精确分子，测试固定非零差及方向/量级，没有扩大容差来消掉差值。
+`Number` 只有 53 位尾数,而 I80F48 需要 128 位。常见的做法是用 `BigNumber` / `decimal.js`。我们对比过另一个真实前端(mrgn 的 `fluxor-ui-v4`)的转换函数,跑了它的代码,有两点值得知道:
 
-四种临时实现突变均使测试失败并已还原：字段偏移 +8、定点位数经 Number、失败交易仍产事件、清算忽略保险费比例。最终检查结果见 [进度](../progress.md#m3-离线验收2026-10-12)。
+- **默认精度只有 20 位有效数字。** 真实 bank 的份额价值精确值是 `1.000000155398776513493430684320628643035888671875`,`decimal.js` 默认精度下得到 `1.0000001553987765135`。显示够用,做精确对账就不够了。
+- **负数少加了 1。** 二补码取负数的绝对值要"按位取反再加 1",它只取反不加 1,于是 `-1.5` 变成 `-1.4999999999999964`,最小的负数 `-2⁻⁴⁸` 变成 `0`。误差只有 3.6e-15,对页面显示没影响。
 
-## 常见坑与验证边界
+我们用原生 `bigint` 做整数运算,**服务端算出精确的原生数量,以十进制字符串发给前端**,前端只负责格式化。
 
-- 计息事件和借款事件可能属于同一借款指令，不能一事件一顶层指令；外部 CPI 的 `Program data` 也不能误解码。CPI、失败与日志截断的边界只用合成日志验证。
-- repay_all 关闭余额后，不要把事件累计净流量设为零；还款整数包括利息与 ceil。`scenario/expected.ts` 保持不动，f64 残留来自链上事件本身。
-- 39/38 是名义清算折扣比。没有中间账户快照，未精确重演上游利息、I80F48 常数/截断和份额转换，不能声称已精确分摊差值。分类的 `f64Bound` 是半 ULP 的理论传播界，不是实际误差或可随意放宽的测试容差。
-- 利息上界假设从零建仓、share value 从 1 单调增加且没有其他费用；这是本剧本的解释，不覆盖破产、withdraw_all、非零开仓费或 Token-2022 费用。其他事件/账户版本/枚举值还没有真实样本。
-- 本次没有联网、重跑剧本、部署或发送交易，也没有检查最新链上状态。
+## 对账:事件和状态是不是讲同一个故事
 
-下一章将保存原始交易，再离线重放 decoder 入库；池子指标读取账户状态，活动流读取事件。
+这是本集的结论。三层检查:
+
+**1. 精确不变量。** 每个 bank 里,三个用户账户的份额之和,按原始位数**等于**这个 bank 记录的总份额。与利息无关。四个差全部是 0。
+
+**2. 与 Anchor 的快照完全相等。** 由原始字节算出的每个账户在每个 bank 的"份额 × 份额价值",与剧本运行时 Anchor 算出的有理数**逐位相等**。
+
+**3. 事件净流量 vs 状态数量。** 把存款、取款、借款、还款事件累加成净额,和状态里的数量比较,**两者并不相等**:
+
+| 账户 / 池子 | 状态 − 事件净流量(原生单位) |
+|---|---:|
+| Alice / tUSDC 存款 | +1546.589 |
+| Carol / tUSDC 存款 | +348.539 |
+| Bob / tUSDC 借款 | +2176.000 |
+| 其余 | 0 |
+
+差值来自三个地方:**利息**(事件里没有逐账户的利息)、**清算事件里的数量是程序用 f64 发出来的**(本身有精度损失)、`repay_all` 的**向上取整**。
+
+怎么确认这些差就是利息?用三个互不依赖的量:
+
+| 量 | 来源 | 数值 |
+|---|---|---:|
+| 存款人所得 | 账户状态 | 1895.128 |
+| 协议费 + 保险费 | 程序发出的 7 条计息事件里的 `fees_collected`、`insurance_collected` | 280.121 |
+| 借款人多付 | 账户状态 | 2176.000 |
+
+**1895.128 + 280.121 = 2175.249,与 2176.000 只差 0.751 个原生单位**,不到 1,正是 `repay_all` 向上取整小于 1 的量级。
+
+**结论:池子指标以账户状态为准;事件用来做活动流。** 事件加起来对不上状态,不是解码器错了,而是事件本来就不携带全部信息。
+
+## 它是怎么被验证的
+
+- 32 笔真实交易里的 25 条事件,与运行时 Anchor `EventParser` 的结果逐条、逐字段一致。
+- 7 个真实账户的所有字段,与 Anchor 账户 coder 逐字段一致。
+- **突变验证**:偏移 +8、定点数经过 `Number`、失败交易仍产出事件、清算比例改成 1、事件不看调用栈、符号丢失——测试都必须失败。
+
+## 常见坑
+
+- **一个事件不等于一条指令。** 一笔借款发出两个事件(先计息、再借款);另一方面,CPI 里别的程序的 `Program data:` 也不能误当成 marginfi 的。
+- **事件里的 f64 不是精确值。** 例如清算事件里的 `5512499999.999999`——这不是我们算错了,是程序发出来就是这样。
+- **39/38 是名义清算折扣比。** 清算事件没有报告清算人在负债 bank 的存款消耗,我们按名义比例推算,没有逐位还原上游的定点截断。
+- **账户解码只收字节,不核对 owner。** 谁调用谁负责检查——EP6 里的快照代码就这样做。
+- **`delta` 是秒数。** 计息事件里的 `delta` 是距上次计息经过的秒数,不是利息。
+
+## 下一集
+
+EP6:原始交易怎么存、游标怎么推进,才能做到"同一批数据入库两次、中途崩溃后重跑,结果完全一样"?

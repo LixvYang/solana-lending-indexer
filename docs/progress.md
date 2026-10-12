@@ -13,7 +13,7 @@
 | M4 | 数据库与幂等入库、回填、游标 | EP6 | done | 离线 89 项测试 + 真实 Postgres/Helius devnet 验收(D-012):清库重跑 md5 一致、读回对账 issues=[]；真实环境另发现并修复 4 个问题 |
 | M5 | API + 前端(含 X 光面板) | EP7 | done | 后端 + 前端已用真实 Postgres/devnet 数据联调并截图检查(浅/深色);联调另发现并修复 4 个问题,见 D-013 |
 | M5a | 只读 API、预言机快照、labels、健康/利率/活动/X 光 | EP7 后端 | done | 2026-10-12:离线 PGlite / fixture / 无 socket HTTP 验证;四处源代码突变捕获并还原;2026-10-13 真实联调修复 4 处(D-013),契约新增 AccountStatus.unknown;104 项测试 |
-| M6 | 按章节整理提交历史、打 tag、写 docs 与 video 分镜 | 全部 | todo | |
+| M6 | 按章节整理提交历史、打 tag、写 docs 与 video 分镜 | 全部 | done | 7 章读者文档(含片段展开脚本与检查)、7 份分镜、tag ep3-end…ep7-end;重跑验收通过;发现并修复干净检出下测试失败(D-014) |
 
 ## 已完成
 
@@ -31,11 +31,14 @@
 
 - 2026-10-13:M5 完成。真实 Postgres + devnet 数据 + 前端联调通过(页面截图检查,浅/深色);测试 104 项。
 
+- 2026-10-13:M6 完成。重写 7 章读者文档,新增 `snapshot-docs` 脚本,写 7 份分镜,打章节 tag;`--run-id r4` 重跑验收通过(D-014)。
+
 ## 下一步
 
-1. M5b 前端与 M5a API 联调；M5a 的真实 pg 迁移/新 CLI 正常路径、HTTP socket 和浏览器验收尚未运行。M3 保留 f64 差值，未修改 expected。
-2. 验证新 `--run-id` 重跑得到结构一致的结果。
-3. 监控 Switchboard devnet oracle,恢复后评估切回。
+1. **录制视频**:先拍 EP2–EP7,最后拍 EP1;分镜在 `video/`。
+2. 监控 Switchboard devnet oracle,恢复后评估切回真实价格(`PRICE_ORACLE=switchboard`)。
+3. 可选的第 8 集:钱包交互(需要先做价格维护进程和水龙头限流)。
+4. 已知待办:`tail` 用 `getBlocks` 跳过空 slot;账户状态逐笔历史;压测与长时间运行。
 
 ## M2 离线验收（2026-10-12）
 

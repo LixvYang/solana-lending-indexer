@@ -31,7 +31,6 @@ export class Reader {
     const bits = BigInt(width * 8);
     return signed && (value & (1n << (bits - 1n))) !== 0n ? value - (1n << bits) : value;
   }
-  // #endregion
   u8(): bigint { return this.integer(1); }
   u16(): bigint { return this.integer(2); }
   u32(): bigint { return this.integer(4); }
@@ -47,3 +46,4 @@ export class Reader {
   pubkey(): string { return encodeBase58(this.bytes(32)); }
   string(): string { return this.bytes(Number(this.u32())).toString('utf8'); }
 }
+// #endregion

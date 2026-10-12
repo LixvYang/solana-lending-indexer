@@ -11,7 +11,7 @@ export function offlineContext(): Context {
   const provider = new anchor.AnchorProvider(new Connection('http://127.0.0.1:8899', {
     fetch: async () => { throw new Error('离线构造不得访问 RPC'); },
   }), new anchor.Wallet(admin), {});
-  const idl = JSON.parse(readFileSync(resolve('program/out/marginfi.idl.json'), 'utf8')) as Idl;
+  const idl = JSON.parse(readFileSync(resolve('src/decoder/idl/marginfi.idl.json'), 'utf8')) as Idl;
   const program = new anchor.Program(idl, provider);
   return { provider, program, actors, admin, step: 0, timestamp: 'test', outputPath: '',
     globalFeeWallet: admin.publicKey,

@@ -1,74 +1,203 @@
 # EP6 存储设计
 
-状态：M4 已实现，离线验收；真实 Postgres / RPC 运行待验证。
+## 本集要回答的问题
 
-## 本章要回答的一个问题
+怎样存数据,才能做到:**同一批数据入库两次、中途崩溃后重跑、清库后重新来过,结果完全一样**?
 
-怎样保存链上事实，让重复采集、崩溃重跑、解码器升级都得到一致的表？
+## 三条原则
 
-## 三个边界
+**1. 先存原始,再解码。** `raw_tx` 保存 RPC 返回的完整交易 JSON,它是**唯一的事实来源**。指令表、事件表都是从它**算出来**的,随时可以清空重建。解码器写错了,改完重放,不用重新拉链上数据。
 
-1. **原始和派生**：ingest 只写 raw_tx。原始 getTransaction JSON（含 meta、失败原因）先持久化，随后 decoder 纯函数生成 instructions / events。账户 RPC 走独立 snapshotAccounts，account_states.data 保留 `raw_data` base64 与解码字段，账户布局变动也能离线重建。
-2. **幂等和原子性**：signature 唯一；指令键是 `(signature, ix_index, inner_index)`，事件键是 `(signature, log_index)`。每 slot 的原始交易与 blocks 游标同一个事务，异常同时回滚；decodePending 的派生行与 decoded_version 同一个事务。旧版本先删再写，避免新版减少输出时遗留旧行。
-3. **finalized 和当前状态**：所有 RPC 请求都明确 finalized。只接受 legacy/v0（maxSupportedTransactionVersion=0），不处理链重组。账户 `context.slot` 是采样时间，不能拿交易 slot 充当历史账户状态；跨 100 账户的批次各用自己的 context.slot，不保证跨批一致。
+**2. 一切写入都幂等。** 主键由链上事实决定,重复写入什么都不发生。
 
-数据顺序：`finalized RPC → raw_tx → instructions/events`；`finalized getMultipleAccounts → owner 检查 → account_states`。
+**3. 游标和数据在同一个事务里推进。** 要么这个 slot 的数据和游标一起落库,要么都不落。
+
+## 表结构
+
+<!-- snippet: src/store/migrations/002_decoded.sql#ep6-schema -->
+```sql
+ALTER TABLE raw_tx ADD COLUMN decoded_version INT;
+
+-- signature + 顶层位置 + CPI 位置确定一次指令调用。
+-- 顶层用 -1：NULL 的普通唯一性比较不相等，且 PRIMARY KEY 禁止 NULL。
+CREATE TABLE instructions (
+  signature TEXT NOT NULL REFERENCES raw_tx(signature) ON DELETE CASCADE,
+  ix_index INT NOT NULL, inner_index INT NOT NULL DEFAULT -1,
+  slot BIGINT NOT NULL, block_time TIMESTAMPTZ, stack_height INT,
+  name TEXT NOT NULL, args JSONB NOT NULL, accounts JSONB NOT NULL,
+  remaining JSONB NOT NULL, decode_error TEXT,
+  PRIMARY KEY (signature, ix_index, inner_index)
+);
+
+-- 同一交易日志里的位置唯一；同一顶层指令可以 emit 多个事件。
+CREATE TABLE events (
+  signature TEXT NOT NULL REFERENCES raw_tx(signature) ON DELETE CASCADE,
+  log_index INT NOT NULL, ix_index INT NOT NULL, slot BIGINT NOT NULL,
+  block_time TIMESTAMPTZ, name TEXT NOT NULL, data JSONB NOT NULL,
+  truncated BOOL NOT NULL,
+  PRIMARY KEY (signature, log_index)
+);
+-- 同一地址同一 context.slot 是一次快照；原始字节存在 data 的 raw_data，支持再解码。
+CREATE TABLE account_states (
+  address TEXT NOT NULL, slot BIGINT NOT NULL, type TEXT NOT NULL,
+  owner TEXT NOT NULL, lamports BIGINT NOT NULL, data JSONB NOT NULL,
+  PRIMARY KEY (address, slot)
+);
+```
+<!-- /snippet -->
+
+几个设计取舍:
+
+- **`inner_index` 用 `-1` 表示顶层指令,而不是 `NULL`。** 主键里的 `NULL` 不参与唯一性比较,两行 `NULL` 可以同时存在,幂等就破了。
+- **失败的交易也进 `raw_tx`。** `err` 非空,它们是事实;只是解码时不产出事件。成功交易的 `err` 必须是 SQL 的 `NULL`,不是 JSON 的 `null`(这是真实联调里踩过的坑,见下)。
+- **解码结果带版本号。** `raw_tx.decoded_version` 记录这一行是被哪一版解码器解码的。升级解码器后,只重做旧版本的行。
+- **账户状态只存快照。** RPC 只给**当前**状态,历史状态需要在每笔交易之后各取一次。我们不做,在 README 的"局限"里写明。
 
 ## 代码走读
 
-SQL 注释解释主键与前端查询索引。顶层指令 inner_index 用 -1：普通 UNIQUE 的 NULL 不相等，PRIMARY KEY 本身也禁止 NULL；不能以 NULL 表示唯一键中的顶层位置。
+### 幂等入库
 
-{{ snippet src/store/migrations/002_decoded.sql#ep6-schema }}
+<!-- snippet: src/store/raw.ts#ep6-idempotent-insert -->
+```ts
+export async function insertRawTx(db: Db, tx: RawTransaction): Promise<boolean> {
+  const signature = tx.transaction.signatures[0];
+  if (!signature || !Number.isSafeInteger(tx.slot) || tx.slot < 0) throw new Error('invalid transaction signature/slot');
+  const result = await db.query(`INSERT INTO raw_tx(signature, slot, block_time, err, tx)
+    VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
+    ON CONFLICT (signature) DO NOTHING RETURNING signature`,
+  [signature, tx.slot, tx.blockTime == null ? null : new Date(tx.blockTime * 1000),
+    // 成功交易的 err 必须是 SQL NULL；toJson(null) 会得到 JSONB 的 null(不是 SQL NULL)，
+    // 那样 `WHERE err IS NULL` 一笔成功交易都查不到。真实 Postgres 上才发现的 bug。
+    tx.meta?.err == null ? null : toJson(tx.meta.err), toJson(tx)]);
+  return result.rows.length === 1;
+}
+```
+<!-- /snippet -->
 
-同一签名重复插入返回 false，不覆盖已经保存的事实。失败交易也保存，指令仍解码；M3 的 decodeEvents 屏蔽失败交易的事件。
+### 游标与原始数据同事务
 
-{{ snippet src/store/raw.ts#ep6-idempotent-insert }}
+<!-- snippet: src/ingest/tail.ts#ep6-cursor-tx -->
+```ts
+inserted += await db.transaction(async tx => {
+  await tx.query("INSERT INTO ingest_cursor(name, slot) VALUES ('blocks', $1) ON CONFLICT (name) DO NOTHING", [initial]);
+  const current = (await tx.query("SELECT slot FROM ingest_cursor WHERE name = 'blocks' FOR UPDATE")).rows[0];
+  if (Number(current.slot) >= slot) return 0;
+  let count = 0;
+  for (const transaction of transactions) if (await insertRawTx(tx, transaction)) count++;
+  // 空块/跳过 slot 也推进；异常会同时回滚本 slot 的 raw_tx 与游标。
+  await tx.query("UPDATE ingest_cursor SET slot = $1 WHERE name = 'blocks'", [slot]);
+  return count;
+});
+```
+<!-- /snippet -->
 
-空块与明确的 skipped slot 也推进游标。-32007 当作 skipped；-32009（节点历史缺失）和 null block 报错，保留游标供重试，不能把缺失当作空块。
+空 slot、被跳过的 slot 也要推进游标。**中途出错,这个 slot 的数据和游标一起回滚**,重跑时从原来的位置继续,既不重复也不遗漏。
 
-{{ snippet src/ingest/tail.ts#ep6-cursor-tx }}
+### 重建解码表
 
-rebuildDecoded 在事务内清空指令/事件、重置版本、重建原始账户快照的解码字段，再完整重放 raw_tx；不会删除作为事实的账户原始字节。DECODER_VERSION 当前为 1，解码逻辑改变时递增。
+<!-- snippet: src/store/decode.ts#ep6-rebuild -->
+```ts
+export function rebuildDecoded(db: Db, idl: Idl): Promise<number> {
+  return db.transaction(async tx => {
+    await tx.query('DELETE FROM instructions');
+    await tx.query('DELETE FROM events');
+    await tx.query('UPDATE raw_tx SET decoded_version = NULL');
+    // account_states 同时保留原始快照，不能删掉唯一的历史字节。
+    const states = (await tx.query('SELECT address, slot, data FROM account_states')).rows;
+    for (const state of states) {
+      const { type, data } = accountData((state.data as { raw_data: string }).raw_data, idl);
+      await tx.query('UPDATE account_states SET type = $1, data = $2::jsonb WHERE address = $3 AND slot = $4',
+        [type, toJson(data), state.address, state.slot]);
+    }
+    return pending(tx, idl);
+  });
+}
+```
+<!-- /snippet -->
 
-{{ snippet src/store/decode.ts#ep6-rebuild }}
+### 账户快照要检查 owner
 
-owner 在 decodeAccount 前检查，错误 owner 拒绝当前批次并报错；此前已提交的其他批次仍保留。直接 snapshotAccounts 默认拒绝缺失账户；CLI 共用 syncStored 只选择成功交易的角色地址，对已关闭的历史账户报告缺失并跳过。
+解码器只收字节,不知道这个账户属于谁。别人可以造一个格式一模一样的账户,所以**入库前必须检查它的 owner 是 marginfi 程序**:
 
-{{ snippet src/store/accounts.ts#ep6-owner-check }}
+<!-- snippet: src/store/accounts.ts#ep6-owner-check -->
+```ts
+export async function snapshotAccounts(db: Db, rpc: AccountRpc, addresses: string[], idl = marginfiIdl, skipMissing = false): Promise<number> {
+  const unique = [...new Set(addresses)];
+  let count = 0;
+  // getMultipleAccounts 每次最多 100 个；每批使用自己的 context.slot，不假装不同批次同时采样。
+  for (let start = 0; start < unique.length; start += 100) {
+    const batch = unique.slice(start, start + 100), response = await rpc.getMultipleAccounts(batch);
+    if (response.value.length !== batch.length) throw new Error('account response length mismatch');
+    const states = batch.flatMap((address, i) => {
+      const account = response.value[i];
+      if (!account) {
+        if (!skipMissing) throw new Error(`missing account ${address}`);
+        // 历史账户可已关闭；CLI 报告缺失但不拿旧快照冒充当前状态。
+        console.error(`missing account ${address} at finalized slot ${response.context.slot}; snapshot skipped`);
+        return [];
+      }
+      if (account.owner !== idl.address) throw new Error(`owner mismatch ${address}: ${account.owner}`);
+      if (account.data[1] !== 'base64') throw new Error(`unexpected account encoding ${address}`);
+      return [{ address, account, ...accountData(account.data[0], idl) }];
+    });
+    await db.transaction(async tx => {
+      for (const state of states) await tx.query(`INSERT INTO account_states(address, slot, type, owner, lamports, data)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (address, slot) DO NOTHING`,
+      [state.address, response.context.slot, state.type, state.account.owner, state.account.lamports, toJson(state.data)]);
+    });
+    count += states.length;
+  }
+  return count;
+}
+```
+<!-- /snippet -->
 
-## 运行与验证
+## 两种取数据的方式
 
-以下真实连接命令是使用说明，本次没有运行数据库连接或 RPC 采集：
+| | 回填 | 实时 |
+|---|---|---|
+| 命令 | `ingest --backfill` | `ingest --tail [--from S] [--to E]` |
+| 怎么取 | `getSignaturesForAddress(程序)` → `getTransaction`,跳过库里已有的 | 逐 slot `getBlock`,筛出调用了程序的交易 |
+| 适合 | 历史 | 实时跟随、扫一小段 |
+| 注意 | 会拿到程序的部署、升级交易(它们把程序地址当账户引用,没有 marginfi 指令) | 追赶历史很慢,每个 slot 一次请求 |
+
+## 在真实环境验证
+
+离线测试用的是进程内的 PGlite。真正连上 Postgres 16 和 Helius 的 devnet 之后,又发现了 **四个离线测试看不到的问题**:
+
+1. **`pg` 对无参数的多语句 SQL(迁移文件)返回的是结果数组**,而不是单个结果。PGlite 语义不同,所以离线通过。
+2. **成功交易的 `err` 被存成了 JSONB 的 `null`**,而不是 SQL 的 `NULL`,于是 `WHERE err IS NULL` 一笔成功交易也查不到。
+3. **devnet 的区块里已经出现 v1 交易。** `getBlock` 声明只支持版本 0 时整块报错,indexer 会卡死在这个 slot。支持的版本上限要设到 1。
+4. **`getBlock` 与 `getTransaction` 的 `meta.rewards` 不同**:前者是 `null`(我们传了 `rewards:false`),后者是 `[]`。除此之外两条路径的交易逐字段相等。
+
+每一个都补了回归测试,并且我把修复拿掉确认测试会失败。
+
+真实数据上的验收结果:
+
+| 检查 | 结果 |
+|---|---|
+| 回填 | 20 笔原始交易 = 18 笔含 marginfi 指令 + 2 笔程序部署/升级 |
+| 解码 | 18 条指令、25 条事件,指令分布与独立基准一致 |
+| **清库重跑一致** | `reindex` 前后,指令表与事件表的 md5 **完全相同** |
+| 不同路径灌数据 | 清库后用"区块扫描 1 笔 + 签名回填其余",md5 同样相同 |
+| 区块扫描 | 只扫清算前后 5 个 slot,找到且只找到清算那一笔,与回填那条的 `slot`、`block_time`、`transaction`、`meta`(除 rewards)全部相等 |
+| 重复运行 | 同一区间再跑一次,`inserted=0` |
+| 读回对账 | 从数据库读出事件和账户状态做 EP5 的对账,`issues = []` |
+
+自己验证:
 
 ```bash
-docker compose up -d
-# DATABASE_URL 默认 postgres://indexer:indexer@localhost:5433/indexer
-pnpm migrate
-# 通过环境设置 RPC_URL；含 api-key 的 URL 不要写入仓库
-pnpm ingest --backfill
-pnpm ingest --tail --once --from 509953029
-pnpm ingest --tail
-pnpm reindex
+pnpm exec tsx scripts/verify-db.ts
+pnpm exec tsx scripts/reindex.ts && pnpm exec tsx scripts/verify-db.ts   # md5 不变
 ```
 
-backfill 分页到空页，遇到已有签名只跳过下载，继续翻页；err 非空照样入库。null getTransaction 报错，重跑时仍会尝试。
+## 常见坑
 
-tail 首次没有游标：--from 包含起点，未设置时从当前 finalized slot 开始；已有 blocks 游标时总是从 cursor+1 恢复，--from 不覆盖它。--once 固定本轮查询到的 finalized 高度，处理完退出。CLI 每轮采集后自动 decodePending，再从指令账户角色提取 bank / marginfi account / group 做当前快照；reindex 完全不调用 RPC。
+- **JSONB 不保留键顺序**(按键的长度再按字节序重排)。解码出的账户映射存成 JSONB 后,账户顺序变了,而账户在指令里的**位置是有语义的**。要保序就存数组,或者读出来再按 IDL 重排(EP7 的 API 就这样做)。
+- **`BIGINT` 的类型差异。** PGlite 返回 JS 的 `bigint`,`pg` 默认返回字符串。适配层统一成字符串。
+- **不处理链重组。** 只入库 finalized。
+- **追赶历史别用 tail。** devnet 一天约 20 万个 slot,逐个请求太慢。
 
-```bash
-pnpm typecheck
-pnpm test
-```
+## 下一集
 
-数据库测试只用进程内 PGlite，不开端口。验收包括 32 原始交易两次写入、18 指令/25 事件独立对照、重复解码、清库重跑与重建逐行相等、版本升级删除旧行但不改当前行、slot/解码事务崩溃恢复、七账户读回后的 reconcile.issues=[]、owner 拒绝、合成 CPI/v0/skipped、RPC 重试与 key 脱敏、CLI 参数和帮助入口。
-
-## 常见坑与边界
-
-- PGlite 的 int8 在本机可返回 number 或 bigint，pg 默认返回字符串；Db 根据 SQL OID=20 统一为字符串并保留 null。pg 仅用 Pool 最小替身验证，未实测真实连接。
-- 解码整数在 JSONB 保存为十进制字符串；fromJson 按 IDL 类型恢复 bigint，不会把 pubkey、普通 string、f64、原始 I80F48 字节误转。M3 对账需要先恢复事件整数。
-- 账户快照保存当前状态，不提供逐笔历史；采集完成后 RPC 返回的状态可能比所采交易更新。账户关闭会报告并跳过，owner 不匹配会报错退出，不能用旧快照冒充最新。没有实现关闭墓碑，查询端需注意旧快照不是当前存在性证明。
-- 重建不修 scenario/expected；事件净流量仍带 D-011 的利息/f64/ceil 差，对账的精确验收对象是账户状态/shares。
-- 公共节点历史保留有限；回填只覆盖节点可见的分页历史。重试有限且指数退避，耗尽后退出，保留已提交事实。
-- 教学版本面向单采集进程；未验证多个迁移/重建 worker 并发、生产级吞吐、RPC 限流压力或长期运行。
-
-本次实际验证和突变记录见 docs/progress.md 的 M4；设计取舍与未验证项见 D-012。下一章使用派生表实现只读 API 与池子展示。
+EP7:把这些数据变成页面,并让观众亲眼看到一笔交易的三种形态。

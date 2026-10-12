@@ -42,7 +42,10 @@ pnpm exec tsx scripts/ingest.ts --backfill           # 按签名回填该程序�
 pnpm exec tsx scripts/ingest.ts --tail --from S --to E   # 扫一段 slot；不带 --to 则持续跟随
 pnpm exec tsx scripts/reindex.ts                     # 只由 raw_tx 重建解码表(无网络)
 pnpm exec tsx scripts/verify-db.ts                   # 读回对账 + 解码表 md5
-pnpm scenario                                        # 打印剧本计划；加 --execute 才在 devnet 发交易
+pnpm scenario                                        # 打印剧本计划；加 --execute 才在 devnet 发交易(--run-id X 用新 group 重放)
+pnpm exec tsx scripts/serve-api.ts                   # 只读 API,端口 8787
+(cd web && pnpm dev)                                 # 前端,端口 5173,代理 /api;?mock 可在没有 API 时预览
+pnpm exec tsx scripts/snapshot-docs.ts [--check]     # 展开/检查章节文档里的 {{ snippet 路径#区域 }}
 ```
 需要 `.env`:`RPC_URL`(Helius devnet)、`ANCHOR_WALLET`；`DATABASE_URL` 默认 `postgres://indexer:indexer@localhost:5433/indexer`。
 

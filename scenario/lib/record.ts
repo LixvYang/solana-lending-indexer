@@ -9,6 +9,8 @@ export interface RecordedEvent { signature: string; name: string; data: Record<s
 export interface Receipt {
   step: number; label: string; signatures: string[]; slot: number | null;
   status: 'signed' | 'submitted' | 'confirmed' | 'finalized' | 'failed'; error?: string;
+  /** 因 blockhash 过期而没有上链、已用新交易替换的签名(只记录，不算数)。 */
+  dropped?: string[];
 }
 export interface RunRecord {
   startedAt: string; runId: string; status: 'running' | 'complete' | 'failed';

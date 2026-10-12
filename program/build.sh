@@ -54,6 +54,17 @@ fi
 cargo build-sbf --manifest-path "$SRC/programs/marginfi/Cargo.toml" "${FEATURES[@]}" --sbf-out-dir "$OUT"
 cargo build-sbf --manifest-path "$SRC/programs/mocks/Cargo.toml" --no-default-features --sbf-out-dir "$OUT"
 
+printf '{"marginfi":"%s"}\n' "$MARGINFI_ID" > "$OUT/program-ids.json.tmp"
+# 5. 生成 IDL 并写到入库位置(src/decoder/idl/)。解码器、剧本和测试都读这一份，不读被忽略的构建产物。
+#    anchor CLI 内部做的就是 idl-build 测试钩子 + 拼接；我们不装 anchor 0.30.1 CLI，所以自己拼(见 assemble-idl.py)。
+#    用自己的 keypair 构建时程序地址会变，IDL 里的 address 也随之更新；SKIP_IDL=1 可跳过。
+if [ "${SKIP_IDL:-0}" != "1" ]; then
+  ANCHOR_IDL_BUILD_PROGRAM_PATH="$SRC/programs/marginfi" ANCHOR_IDL_BUILD_SKIP_LINT=true ANCHOR_IDL_BUILD_RESOLUTION=true \
+    cargo test --manifest-path "$SRC/programs/marginfi/Cargo.toml" --no-default-features --features idl-build,devnet \
+    __anchor_private_print_idl --lib -- --show-output --test-threads=1 > "$OUT/idl-build.log" 2>&1
+  python3 "$ROOT/assemble-idl.py" "$OUT/idl-build.log" "$ROOT/../src/decoder/idl/marginfi.idl.json" "$OUT/program-ids.json.tmp"
+fi
+
 echo "mode:     $MODE (price oracle: $PRICE_ORACLE)"
 echo "marginfi: $MARGINFI_ID"
 echo "mocks:    $MOCKS_ID"

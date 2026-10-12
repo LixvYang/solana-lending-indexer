@@ -1,78 +1,238 @@
 # EP7 前端与总结
 
-状态：M5a 后端已实现并离线验证；前端独立开发，本次不验收前端。
+## 本集要回答的问题
 
-## 本章要回答的一个问题
+怎样把数据库里的数据变成页面,并且让观众亲眼看到:**一笔交易的原始字节、解码结果、数据库行,是同一件事的三种样子**?
 
-怎样把数据库中的协议状态变成池子视图，并展示同一笔交易的原始字节、解码结果和数据库行？
+## 后端:只读 API
 
-## 后端数据来源
+API 只读数据库,不连 RPC,也不碰任何密钥。六个路由:
 
-API 只读 `raw_tx`、`instructions`、`events`、`account_states`、`labels`，不连接 RPC。
-`ingest` 的 `syncStored` 在协议账户快照后，读取最新 Bank 的 `oracle_keys[0]` 并采集 PullFeed。
-预言机 owner 必须在 `ORACLE_OWNERS`（逗号分隔）的集合内；未设置时使用仓库根目录下
-`program/out/program-ids.json` 的 mocks 及 Switchboard devnet 程序；文件缺失时只用后者。
-拒绝 owner/布局错误的整批价格，缺失账户报告并跳过。每批保留 `context.slot` 和原始 base64；重建时也能重解价格。
+| 路由 | 返回 |
+|---|---|
+| `GET /api/pool` | 每个 bank 的价格、存款、借款、利用率、利率、权重 |
+| `GET /api/rate-curve?bank=` | 利率曲线上的 101 个点,和当前利用率落在哪 |
+| `GET /api/accounts` | 每个账户的头寸、两种健康度、状态 |
+| `GET /api/activity?limit=&before=` | 活动流,稳定游标分页 |
+| `GET /api/tx/:signature` | **X 光**:同一笔交易的三种形态 |
+| `GET /api/health` | 存活检查 |
 
-价格是 D-009 的 Switchboard **布局 mock**，不是当前真实 Switchboard oracle 的报价。
-`sample_size=0` 的未 crank 账户仍可解出 0，但视图将它视作价格缺失。API 显示最近已存价格与更新时间，未判断其当前新鲜度。
-标签是链下元数据：mint 符号优先用于池子标题，账户昵称来自 labels；缺标签时缩写地址，不由链上数据猜名称。
+前后端之间的数据契约只有一个文件:`src/api/types.ts`。后端按它输出,前端按它读取;`import type` 在构建时会被擦掉,所以两边没有运行时依赖。
 
-## 数量、利率与健康度
+### 数量用字符串,显示用浮点
 
-两个 I80F48 的原始位数相乘，分母是 `2^96`。原生数量字符串向下取整；利用率先算精确比值，再转 number，
-USD/健康度保留原生数量分数到显示边界。账户有无债务也按精确分子判断，避免微量债务被取整隐藏。
-利率由两段线性曲线计算：存款 `base × utilization`，借款 `base × (1 + fee_rate) + fee_fixed_apr`。
-费用包含保险费、group 费、启用时的 group 缓存 program 费；一次性 origination fee 不进入 APR。
-缺少 group 快照时拒绝组装，不猜费用为零。有限利用率在显示中饱和到 0..1；NaN/Infinity 拒绝。
+契约里的约定很重要:
 
-{{ snippet src/api/math.ts#ep7-rates }}
+- **原生数量**(比如 `5000000000`)是**十进制字符串**,服务端用 `bigint` 精确算出。
+- **USD、APR、价格、健康度**是给人看的浮点数,**不能用来对账**。
 
-健康度按 init / maint 权重计算。清算事件的 f64 余额是原生单位，先除以 `10^decimals`；
-当前 fixture 的 pre/post maint 与程序报告值差小于 `1e-6`，不是浮点逐位重演。
-有实际余额且缺 bank/价格时健康度为 null；缺 bank 的账户视图报错，避免漏掉仓位。
-无负债仍是 `no_debt`；有负债且缺价格只能沿用契约的 `liquidatable` 作为保守显示，**不证明可清算**。
+前端把原生数量转成代币数量时也用 `BigInt`(`fmtToken`),不经过 `Number`。
 
-{{ snippet src/api/math.ts#ep7-health }}
+### 利率
 
-## 活动流与 X 光
+利率函数和 EP3 里的公式一致。借款利率是基础利率加上按比例的费用,再加固定费用的 APR;存款利率是基础利率乘以利用率:
 
-活动流一条顶层 marginfi 指令一行，按 slot / ix_index / signature（C 排序）降序。
-默认 limit=20，范围 1..100；使用最后一行三元组为游标。主事件按指令名精确映射，计息事件不冒充 borrow/deposit。
-失败指令仍显示 `ok=false`，没有已发生的业务事件；清算没有 u64 `amount`，返回 null。
-事件只有顶层 ix_index，没有 inner_index；同一顶层调用重复 emit 相同主事件时取最后一条，不承诺区分嵌套来源。
+<!-- snippet: src/api/math.ts#ep7-rates -->
+```ts
+export function curveRate(value: number, curve: InterestCurve): number {
+  const u = utilization(value), o = curve.optimal_utilization;
+  if (!(o > 0 && o < 1))
+    throw new Error('optimal utilization must be between 0 and 1');
+  return u <= o ? u / o * curve.plateau_rate
+    : curve.plateau_rate + (u - o) / (1 - o) * (curve.max_rate - curve.plateau_rate);
+}
+export function rates(value: number, curve: InterestCurve) {
+  const u = utilization(value), base = curveRate(u, curve);
+  // marginfi_group.rs:320-334：insurance + group + enabled program 费用分别求和；原始配置的求和在 bank.ts。
+  return { lending_apr: base * u, borrowing_apr: base * (1 + curve.fee_rate) + curve.fee_fixed_apr };
+}
+```
+<!-- /snippet -->
 
-{{ snippet src/api/spans.ts#ep7-spans }}
+### 健康度:金标准是程序自己算的
 
-X 光列出全部原始 top/inner 指令：marginfi 从数据库解码行取字段，外部程序保留原文并显示 unknown。
-已知参数由 IDL/Borsh 逐个切分，unknown/损坏指令保留完整原始字节分段；非法 base58 保留原文和错误。
-事件 base64 直接取原始日志对应 log_index；rows 保留两张表原始行，不作字段类型猜测。
+<!-- snippet: src/api/math.ts#ep7-health -->
+```ts
+export function health(balances: HealthBalance[], banks: Record<string, HealthBank>, prices: Record<string, number | null>, mode: 'init' | 'maint'): number | null {
+  let result = 0;
+  for (const balance of balances) {
+    if (!quantity(balance.deposit).numerator && !quantity(balance.borrow).numerator)
+      continue;
+    const bank = banks[balance.bank], price = prices[balance.bank];
+    if (!bank || price == null || !Number.isFinite(price))
+      return null;
+    result += usd(balance.deposit, bank.decimals, price)! * bank.weights[`asset_${mode}`]
+      - usd(balance.borrow, bank.decimals, price)! * bank.weights[`liability_${mode}`];
+  }
+  return result;
+}
+```
+<!-- /snippet -->
 
-{{ snippet src/api/xray.ts#ep7-xray }}
+怎么知道算对了?清算事件里,**程序自己报告了被清算账户的健康度**:`liquidatee_pre_health = −750.00178`。我们用事件里的余额、当时的价格($50 和 $1)和 bank 的维持权重重新算一遍:
 
-## 运行与验证
-
-以下服务命令供本地人工运行；本次没有连接真实数据库或监听端口：
-
-```bash
-pnpm migrate
-pnpm exec node --import tsx scripts/load-labels.ts
-pnpm exec node --import tsx scripts/serve-api.ts
-pnpm typecheck
-pnpm test
+```
+100 tSOL × $50 × 0.9  −  5000.0017 tUSDC × $1 × 1.05  =  4500 − 5250.00178  =  −750.00178
 ```
 
-`serve-api` 默认绑定 `127.0.0.1:8787`，用 PORT 改端口；数据库通过 DATABASE_URL 配置。
-启动 API 不自动迁移、不采集快照、不连 RPC。CORS 固定允许 `http://localhost:5173`。
-GET 路由：`/api/pool`、`/api/accounts`、`/api/rate-curve?bank=<address>`、
-`/api/activity?limit=20&before=<cursor>`、`/api/tx/<signature>`、`/api/health`。
-health 探测数据库；未知路径/资源 404，参数错误 400，内部错误 500 固定消息，不返回或记录连接 URL。
+清算之后的 `post_health = −701.2518` 同样对得上。**与程序自己的结果在 1e-6 内相等。**
 
-离线测试使用 PGlite、本地 fixture 和假账户 RPC；HTTP 测试直接调用 route / handle，不使用 socket。
-临时源代码突变与最终检查证据见 `docs/progress.md`；设计取舍、契约异议和未验收范围见 D-013。
+### 缺价格时:unknown
 
-## 验证边界
+有负债但拿不到价格时,健康度算不出来。API 返回 `unknown`,**既不说健康,也不说可清算**——没有价格就没有清算资格的证据。(这是 codex 审查契约时提出的,我们采纳了。)
 
-快照只是各地址最后一次采样，`as_of_slot` 是最大 slot，不证明所有账户同一时刻，更不等于逐笔历史。
-并发写库时多次 SELECT 可能看到不同提交；没有增加跨请求快照隔离或实时更新推送。
-没有新鲜度策略、关闭墓碑、主网验证、真实 PostgreSQL/API socket/浏览器联调或吞吐测试。
+### X 光
+
+<!-- snippet: src/api/xray.ts#ep7-xray -->
+```ts
+export async function getXray(db: Db, signature: string): Promise<XrayView | null> {
+  const row = (await db.query('SELECT * FROM raw_tx WHERE signature=$1', [signature])).rows[0];
+  if (!row)
+    return null;
+  const raw = row.tx as RpcTransaction, logs = raw.meta?.logMessages ?? [];
+  const instructions = (await db.query('SELECT * FROM instructions WHERE signature=$1 ORDER BY ix_index,inner_index', [signature])).rows;
+  const events = (await db.query('SELECT * FROM events WHERE signature=$1 ORDER BY log_index', [signature])).rows;
+  const keys = [...raw.transaction.message.accountKeys, ...(raw.meta?.loadedAddresses?.writable ?? []), ...(raw.meta?.loadedAddresses?.readonly ?? [])];
+  const positions: {
+    ix: RpcInstruction;
+    ix_index: number;
+    inner_index: number | null;
+  }[] = [];
+  raw.transaction.message.instructions.forEach((ix, ix_index) => {
+    positions.push({ ix, ix_index, inner_index: null });
+    for (const group of raw.meta?.innerInstructions ?? [])
+      if (group.index === ix_index)
+        group.instructions.forEach((inner, inner_index) => positions.push({ ix: inner, ix_index, inner_index }));
+  });
+  const decoded = positions.map(({ ix, ix_index, inner_index }): XrayInstruction => {
+    const stored = instructions.find(r => r.ix_index === ix_index && r.inner_index === (inner_index ?? -1));
+    const program = keys[ix.programIdIndex] ?? 'unknown', name = stored ? String(stored.name) : 'unknown';
+    const entry = marginfiIdl.instructions.find(i => i.name === name);
+    let data_hex = '', spans: XrayInstruction['spans'] = [], decode_error = stored?.decode_error as string | null ?? null;
+    try {
+      const bytes = decodeBase58(ix.data);
+      data_hex = bytes.toString('hex');
+      if (program === marginfiIdl.address && stored && !decode_error) {
+        try {
+          spans = byteSpans(bytes);
+        }
+        catch (error) {
+          decode_error = (error as Error).message;
+          spans = rawSpans(bytes);
+        }
+      }
+      else
+        spans = rawSpans(bytes);
+    }
+    catch {
+      decode_error = 'invalid base58 instruction data';
+    }
+    return { ix_index, inner_index, program, name, data_base58: ix.data, data_hex, spans,
+      args: inIdlOrder(entry?.args.map(a => a.name) ?? [], stored?.args as Record<string, unknown>),
+      accounts: inIdlOrder(entry ? accountNames(entry.accounts) : [], stored?.accounts as Record<string, string>),
+      remaining: stored?.remaining as string[] ?? [], decode_error };
+  });
+  return { signature, slot: String(row.slot), block_time: iso(row.block_time), err: row.err ?? null, logs, instructions: decoded,
+    events: events.map(e => ({ log_index: Number(e.log_index), ix_index: Number(e.ix_index), name: String(e.name),
+      base64: (logs[Number(e.log_index)] ?? '').slice('Program data: '.length), data: e.data as Record<string, unknown> })),
+    rows: { instructions, events } };
+}
+```
+<!-- /snippet -->
+
+一笔交易的三种形态:
+
+1. **链上原始字节**:指令数据的 base58 原文、十六进制,以及按"discriminator + 每个参数"切好的字节段。
+2. **解码结果**:指令名、参数、按 IDL 命名的账户。
+3. **数据库行**:`instructions` 表和 `events` 表里存的那一行。
+
+字节是怎么切的:
+
+<!-- snippet: src/api/spans.ts#ep7-spans -->
+```ts
+export function byteSpans(data: Uint8Array, idl: Idl = marginfiIdl): ByteSpan[] {
+  const bytes = Buffer.from(data);
+  if (bytes.length < 8)
+    throw new Error('need 8 discriminator bytes');
+  const entry = idl.instructions.find(i => Buffer.from(i.discriminator).equals(bytes.subarray(0, 8)));
+  if (!entry)
+    return rawSpans(bytes);
+  const spans: ByteSpan[] = [{ offset: 0, length: 8, label: 'discriminator', hex: bytes.subarray(0, 8).toString('hex'), value: entry.name }];
+  const reader = new Reader(bytes.subarray(8));
+  for (const field of entry.args) {
+    const offset = bytes.length - reader.remaining;
+    const value = JSON.parse(toJson(decodeType(field.type, reader, idl)));
+    const length = bytes.length - reader.remaining - offset;
+    spans.push({ offset, length, label: field.name, hex: bytes.subarray(offset, offset + length).toString('hex'), value });
+  }
+  if (reader.remaining)
+    throw new Error(`trailing instruction bytes: ${reader.remaining}`);
+  let end = 0;
+  for (const span of spans) {
+    if (span.offset !== end)
+      throw new Error('non-contiguous spans');
+    end += span.length;
+  }
+  if (end !== bytes.length)
+    throw new Error('incomplete spans');
+  return spans;
+}
+```
+<!-- /snippet -->
+
+断言:各段首尾相接,总长等于数据长度。
+
+## 前端
+
+Vite + React + TypeScript,图表**手写 SVG**,不引图表库。
+
+- **总览**:一个大数字(总存款)+ 两个指标卡 + 利用率仪表。
+- **利率曲线**:2px 折线,悬停有十字线和提示框,可展开数据表。
+- **账户**:状态永远是"图标 + 文字",不只靠颜色。
+- **活动流**:点任意一行打开 X 光。
+- **X 光抽屉**:三栏并排。左栏的字节按"discriminator / 各参数"着色,**鼠标移到某个字节段上,中栏对应的字段同步高亮**。
+
+配色用的是经过验证的调色板:图里的蓝和橙在浅色、深色两种背景下,对比度和色盲区分度都用脚本检查过,而不是凭眼睛判断。
+
+### 对照另一个真实前端
+
+mrgn 自己的前端(`fluxor-ui-v4`,Next.js)是"链 → Next 路由 → 浏览器",没有自建数据库;`WrappedI80F48` 作为 16 个数字的数组原样发到浏览器,再用 `decimal.js` + `BigNumber` 转换(精度细节见 EP5)。我们的区别是:
+
+| | 它 | 我们 |
+|---|---|---|
+| 数据来源 | 直接读链 | 数据库(链上数据的有序副本) |
+| 精确计算在哪 | 浏览器,`BigNumber` | 服务端,`bigint` |
+| 有无历史活动流 | 无 | 有 |
+| 能看原始字节 | 否 | X 光 |
+
+## 真实联调中发现的问题
+
+这些在离线测试里都没有暴露,接上真实数据库和真实 devnet 数据才出现:
+
+1. **JSONB 重排了键的顺序。** 清算指令的账户在 X 光里变成了 `group, signer, liab_bank…`,而链上的顺序是 `group, asset_bank, liab_bank, …`。API 现在按 IDL 的声明顺序重排。**数据库里存的那一行本身仍是被重排的**,X 光第三栏如实展示它——这是一个值得讲的点。
+2. **清算行的代币是空的。** 清算事件没有 `bank` 字段,只有 `asset_bank` 和 `liability_bank`。现在取被清算资产所在的 bank。
+3. **交易里还有别的程序的指令**(设置算力、SPL Token 转账)。它们没有数据库行,前端折叠起来并标出程序名,不再显示成 `unknown`。
+4. **权重显示成 `0.7999999999999972`**:这是 I80F48 定点数的舍入噪声,显示时取 3 位小数。
+
+## 整套流水线回顾
+
+```
+链上 → raw_tx(原始事实)→ 解码(纯函数,可重放)→ 指令/事件/账户状态 → API → 页面
+```
+
+- **EP2** 画了数据地图;**EP3** 造出了可重复的链上数据。
+- **EP4–EP5** 手写解码:指令、事件、账户。
+- **EP6** 保证幂等、可回填、可重放。
+- **EP7** 把一切摆在眼前。
+
+## 局限(诚实地说)
+
+- **价格是布局一致的 mock。** devnet 上 Switchboard 的 oracle 离线,见 EP3。
+- **不处理链重组**,只入库 finalized。
+- **账户状态只有快照**,没有逐笔历史。
+- **只覆盖剧本涉及的指令。** 其余的存成 `unknown`。
+- **前端只读。** 没有钱包连接,不能在页面上发交易。
+
+## 换一个协议怎么办
+
+整条流水线里**和 marginfi 绑定的只有两样**:IDL(`src/decoder/idl/`),以及账户的布局(由 IDL 算出,`layout.ts` 本身由 IDL 驱动,没有写死 marginfi 的偏移)。`ingest`、`store`、API 的骨架原则上都不用动——**但我们没有在别的协议上验证过这一点**。当然,利率、健康度这些业务公式(`src/api/math.ts`)和前端的指标是协议相关的,需要重写。

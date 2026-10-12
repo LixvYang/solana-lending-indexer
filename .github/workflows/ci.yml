@@ -1,0 +1,25 @@
+# 干净检出下必须通过:类型检查、全部离线测试、文档片段与源码同步、前端类型检查。
+# 为什么需要:曾经有测试读取被 .gitignore 的构建产物,只在作者本机能通过(docs/decisions.md D-014)。
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm exec tsx scripts/snapshot-docs.ts --check
+      - name: 前端类型检查
+        working-directory: web
+        run: pnpm install --frozen-lockfile && pnpm typecheck

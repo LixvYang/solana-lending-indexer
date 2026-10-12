@@ -11,7 +11,7 @@ import { fetchAccount } from './state';
 export async function createContext(runId: string): Promise<Context> {
   const root = resolve('.');
   const ids = JSON.parse(readFileSync(join(root, 'program/out/program-ids.json'), 'utf8'));
-  const idl = JSON.parse(readFileSync(join(root, 'program/out/marginfi.idl.json'), 'utf8')) as Idl;
+  const idl = JSON.parse(readFileSync(join(root, 'src/decoder/idl/marginfi.idl.json'), 'utf8')) as Idl;
   if (ids.mode !== 'devnet' || idl.address !== ids.marginfi || idl.metadata.version !== '0.1.0')
     throw new Error('需要 devnet 构建的 mrgn-0.1.0，且 IDL 与 program-ids 必须一致');
   const { provider, admin } = await connect();

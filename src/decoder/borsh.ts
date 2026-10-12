@@ -44,7 +44,6 @@ export function decodeType(type: IdlType, reader: Reader, idl: Idl): unknown {
     for (let i = 0; i < count; i++) values.push(decodeType(element, reader, idl));
     return values;
   }
-  // #endregion
   const definition = idl.types?.find(entry => entry.name === type.defined.name);
   if (!definition) throw new Error(`undefined IDL type: ${type.defined.name}`);
   if (definition.type.kind === 'struct') {
@@ -60,3 +59,4 @@ export function decodeType(type: IdlType, reader: Reader, idl: Idl): unknown {
   if (!variant) throw new Error(`invalid enum tag ${tag}: ${definition.name}`);
   return { [variant.name]: decodeFields(variant.fields, reader, idl) };
 }
+// #endregion
