@@ -74,3 +74,18 @@ test('fees include insurance/group/enabled program cache; exact nonzero utilizat
   await db.query('DELETE FROM account_states WHERE address=$1',[run.addresses.group]);await assert.rejects(getPool(db),/missing group/);
  }finally{await db.close();}
 });
+
+// 真实联调时发现：重跑剧本会新建 group，--follow 把它们全部入库后，API 不知道"当前池子"是哪个。
+test('POOL_GROUP 只保留指定的池子；不设置时多个 group 并存则 pool.group 为 null', async () => {
+  const db = await seedApi();
+  try {
+    const before = process.env.POOL_GROUP;
+    process.env.POOL_GROUP = run.addresses.group;
+    assert.equal((await getPool(db)).group, run.addresses.group);
+    assert.equal((await getPool(db)).banks.length, 2);
+    process.env.POOL_GROUP = '11111111111111111111111111111111'; // 一个不存在的 group
+    assert.equal((await getPool(db)).banks.length, 0);
+    assert.equal((await getAccounts(db)).length, 0);
+    if (before === undefined) delete process.env.POOL_GROUP; else process.env.POOL_GROUP = before;
+  } finally { await db.close(); }
+});

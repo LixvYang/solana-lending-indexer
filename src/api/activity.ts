@@ -1,4 +1,5 @@
 /** INPUT: Db 顶层 instructions、events、raw_tx、labels。 OUTPUT: getActivity 稳定分页。 POSITION: EP7 活动流，只读。 SYNC: 同步 folder.md。 */
+import { poolGroup } from './state';
 import type { Db } from '../store/db';
 import type { ActivityPage } from './types';
 import { ApiError } from './errors';
@@ -27,9 +28,13 @@ export async function getActivity(db: Db, options: {
   before?: string;
 } = {}): Promise<ActivityPage> {
   const { limit, cursor } = activityOptions(options);
+  // 设置了 POOL_GROUP 时只看这个池子的指令：账户映射里的 group 叫 marginfi_group，清算指令里叫 group。
+  const group = poolGroup(), params: unknown[] = [limit + 1, ...(cursor ?? [])];
+  if (group) params.push(group);
+  const scope = group ? `AND (i.accounts->>'marginfi_group' = $${params.length} OR i.accounts->>'group' = $${params.length})` : '';
   const rows = (await db.query(`SELECT i.*,r.err FROM instructions i JOIN raw_tx r USING(signature)
-  WHERE i.inner_index=-1 ${cursor ? 'AND (i.slot,i.ix_index,i.signature COLLATE "C") < ($2::bigint,$3::int,$4::text COLLATE "C")' : ''}
-  ORDER BY i.slot DESC,i.ix_index DESC,i.signature COLLATE "C" DESC LIMIT $1`, [limit + 1, ...(cursor ?? [])])).rows;
+  WHERE i.inner_index=-1 ${scope} ${cursor ? 'AND (i.slot,i.ix_index,i.signature COLLATE "C") < ($2::bigint,$3::int,$4::text COLLATE "C")' : ''}
+  ORDER BY i.slot DESC,i.ix_index DESC,i.signature COLLATE "C" DESC LIMIT $1`, params)).rows;
   const page = rows.slice(0, limit), signatures = [...new Set(page.map(r => r.signature))];
   const events = signatures.length ? (await db.query('SELECT * FROM events WHERE signature=ANY($1::text[]) ORDER BY log_index DESC', [signatures])).rows : [];
   const labels = Object.fromEntries((await db.query('SELECT address,label FROM labels')).rows.map(r => [String(r.address), String(r.label)]));

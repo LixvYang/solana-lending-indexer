@@ -16,7 +16,8 @@ export const chain = {
   wallet: (pubkey: string) => call<WalletView>(`/api/wallet/${pubkey}`),
   build: (request: BuildRequest) => call<BuildResponse>('/api/build', post(request)),
   send: (transaction: string) => call<SendResponse>('/api/send', post({ transaction })),
-  faucet: (url: string, wallet: string) => call<FaucetResponse>(`${url}/faucet`, post({ wallet })),
+  // FAUCET_URL 带不带 /faucet 后缀都行。
+  faucet: (url: string, wallet: string) => call<FaucetResponse>(url.endsWith('/faucet') ? url : `${url}/faucet`, post({ wallet })),
 };
 
 export const explorer = (signature: string) => `https://explorer.solana.com/tx/${signature}?cluster=devnet`;

@@ -57,6 +57,12 @@ export interface State {
   feeds: Record<string, FeedData>;
   users: Record<string, UserData>;
 }
+/**
+ * 数据库里可能有多个 group(多个池子)：每次重跑剧本都会新建一个，--follow 也会把它们全部入库。
+ * 设置 POOL_GROUP 后，池子、账户都只看这个 group；不设置时保持原行为(多个 group 并存时 pool.group 为 null，不猜)。
+ */
+export const poolGroup = () => process.env.POOL_GROUP || null;
+
 export async function readState(db: Db): Promise<State> {
   const rows = (await db.query('SELECT DISTINCT ON (address) * FROM account_states ORDER BY address, slot DESC')).rows;
   const labels = Object.fromEntries((await db.query('SELECT address,label FROM labels')).rows.map(r => [String(r.address), String(r.label)]));
@@ -73,6 +79,12 @@ export async function readState(db: Db): Promise<State> {
       state.users[address] = fromJson(data, type, marginfiIdl) as UserData;
     if (type === 'switchboardPullFeed')
       state.feeds[address] = data as unknown as FeedData;
+  }
+  const only = poolGroup();
+  if (only) {
+    state.banks = Object.fromEntries(Object.entries(state.banks).filter(([, b]) => b.group === only));
+    state.groups = Object.fromEntries(Object.entries(state.groups).filter(([a]) => a === only));
+    state.users = Object.fromEntries(Object.entries(state.users).filter(([, u]) => u.group === only));
   }
   return state;
 }

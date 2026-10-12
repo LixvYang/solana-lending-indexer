@@ -106,6 +106,8 @@ export function WalletPanel({ banks, accounts }: { banks: BankView[]; accounts: 
           <label className="field-row">数量
             <input inputMode="decimal" placeholder="0.0" value={all ? '' : amount} disabled={all} onChange={(e) => setAmount(e.target.value)} /></label>
           {actionDef.allLabel && <label className="field-row check"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> {actionDef.allLabel}(含利息,由程序精确结算)</label>}
+          {action === 'borrow' && mine?.balances.some((b) => b.bank === bank?.address && b.deposit !== '0') && (
+            <p className="muted" style={{ fontSize: 12 }}>提示:你在 {bank?.label} 里有存款。marginfi 中同一个代币的头寸要么是存款要么是负债,借款会先从你的存款里扣,扣完才产生负债。想借出来,请用另一种代币做抵押。</p>)}
           {!all && amount && !native && <p className="err">数量格式不对,或小数位超过 {bank?.decimals} 位。</p>}
           <p><button className="theme" onClick={preview} disabled={!canBuild || Boolean(busy)}>预览</button></p>
 
