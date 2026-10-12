@@ -9,6 +9,9 @@ import { parseIngestArgs } from '../../scripts/ingest-options';
 const loader = createRequire(resolve('package.json')).resolve('tsx');
 test('ingest accepts exactly one mode and valid inclusive from/once only for tail', () => {
   assert.deepEqual(parseIngestArgs(['--backfill']), { mode: 'backfill', once: false });
+  assert.deepEqual(parseIngestArgs(['--follow']), { mode: 'follow', once: false });
+  assert.deepEqual(parseIngestArgs(['--follow', '--once']), { mode: 'follow', once: true });
+  for (const args of [['--follow', '--from', '1'], ['--follow', '--to', '1'], ['--follow', '--tail']]) assert.throws(() => parseIngestArgs(args), /用法/);
   assert.deepEqual(parseIngestArgs(['--tail', '--once', '--from', '42']), { mode: 'tail', once: true, from: 42 });
   for (const args of [[], ['--tail','--backfill'], ['--backfill','--once'], ['--backfill','--from','1'], ['--tail','--from','-1'], ['--tail','--from','abc'], ['--tail','--from'], ['--tail','--other'], ['--tail','--from','9007199254740992']]) assert.throws(() => parseIngestArgs(args), /用法|slot/);
 });

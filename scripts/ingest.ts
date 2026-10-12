@@ -14,12 +14,16 @@ async function main() {
   const rpc = new Rpc(process.env.RPC_URL);
   await runStoreCommand(async db => {
     for (;;) {
+      // follow:每轮一次 getSignaturesForAddress，遇到已知签名即停——适合演示时实时跟随(几乎不耗 RPC 额度)。
+      // tail:逐 slot getBlock，只适合扫一小段；追赶历史请用 backfill。
       const inserted = options.mode === 'backfill' ? await backfill(db, rpc, marginfiIdl.address)
+        : options.mode === 'follow' ? await backfill(db, rpc, marginfiIdl.address, { stopAtKnown: true })
         : await tailOnce(db, rpc, marginfiIdl.address, options.from, options.to);
       const { decoded, snapshots } = await syncStored(db, rpc, marginfiIdl);
       console.log(`inserted=${inserted} decoded=${decoded} snapshots=${snapshots}`);
       if (options.mode === 'backfill' || options.once || options.to !== undefined) return;
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // follow 每 5 秒一轮(finalized 本身就有十几秒延迟，更频繁没有意义)。
+      await new Promise(resolve => setTimeout(resolve, options.mode === 'follow' ? 5000 : 2000));
     }
   });
 }

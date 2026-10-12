@@ -1,12 +1,12 @@
 /** INPUT: CLI 参数。 OUTPUT: parseIngestArgs。 POSITION: EP6 无副作用参数入口。 SYNC: 同步 folder.md。 */
-export const ingestUsage = '用法: ingest --backfill | --tail [--once] [--from <slot>] [--to <slot>]';
-export function parseIngestArgs(args: string[]): { mode: 'backfill' | 'tail'; once: boolean; from?: number; to?: number } {
-  let mode: 'backfill' | 'tail' | undefined, once = false, from: number | undefined, to: number | undefined;
+export const ingestUsage = '用法: ingest --backfill | --follow | --tail [--once] [--from <slot>] [--to <slot>]';
+export function parseIngestArgs(args: string[]): { mode: 'backfill' | 'tail' | 'follow'; once: boolean; from?: number; to?: number } {
+  let mode: 'backfill' | 'tail' | 'follow' | undefined, once = false, from: number | undefined, to: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--backfill' || arg === '--tail') {
+    if (arg === '--backfill' || arg === '--tail' || arg === '--follow') {
       if (mode) throw new Error(ingestUsage);
-      mode = arg === '--tail' ? 'tail' : 'backfill';
+      mode = arg === '--tail' ? 'tail' : arg === '--follow' ? 'follow' : 'backfill';
     } else if (arg === '--once' && !once) once = true;
     else if (arg === '--from' && from === undefined) {
       const raw = args[++i];
@@ -19,6 +19,6 @@ export function parseIngestArgs(args: string[]): { mode: 'backfill' | 'tail'; on
       to = Number(raw);
     } else throw new Error(ingestUsage);
   }
-  if (!mode || (mode === 'backfill' && (once || from !== undefined || to !== undefined))) throw new Error(ingestUsage);
+  if (!mode || (mode !== 'tail' && (from !== undefined || to !== undefined)) || (mode === 'backfill' && once)) throw new Error(ingestUsage);
   return { mode, once, ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}) };
 }
