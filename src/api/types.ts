@@ -175,3 +175,86 @@ export interface XrayView {
   /** 数据库里 instructions / events 表的行(JSON 原样)。 */
   rows: { instructions: Record<string, unknown>[]; events: Record<string, unknown>[] };
 }
+
+/* ───────────────────────── 钱包交互(M7) ─────────────────────────
+ * 交易由服务端构建、钱包签名、服务端转发。浏览器里没有 Anchor，也看不到 RPC 密钥。
+ * 服务端只会用两类密钥签名:新建的 marginfi 账户(一次性)、公开的价格账户。从不持有管理员密钥。
+ */
+
+export type WalletAction = 'deposit' | 'withdraw' | 'borrow' | 'repay';
+
+export interface BuildRequest {
+  action: WalletAction;
+  /** 用户钱包地址(手续费付款人,也是 marginfi 账户的 authority)。 */
+  wallet: string;
+  bank: string;
+  /** 原生单位的十进制字符串；`all` 为 true 时忽略。 */
+  amount: string;
+  /** repay_all / withdraw_all：清空该头寸(由程序按含利息的精确数量结算)。 */
+  all?: boolean;
+}
+
+/** 链上错误的人话版本。code 是 Anchor 错误码(没有则为 null)。 */
+export interface ProgramErrorView {
+  code: number | null;
+  name: string;
+  message: string;
+}
+
+export interface SimulationView {
+  ok: boolean;
+  error: ProgramErrorView | null;
+  logs: string[];
+  units_consumed: number | null;
+}
+
+export interface BuildResponse {
+  /** base64 的 v0 交易：未签名，或只带一次性账户(新建的 marginfi 账户)的签名。 */
+  transaction: string;
+  /** 超过这个区块高度交易就过期。 */
+  last_valid_block_height: number;
+  /** 这笔交易会同时创建用户的 marginfi 账户(首次存款)。 */
+  creates_account: boolean;
+  marginfi_account: string;
+  simulation: SimulationView;
+  /** 给人看的一句话摘要，如 “存入 1,000 tUSDC”。 */
+  summary: string;
+}
+
+export interface SendRequest {
+  /** base64，已由钱包签名。 */
+  transaction: string;
+}
+
+export interface SendResponse {
+  signature: string;
+  status: 'confirmed' | 'failed' | 'timeout';
+  error: ProgramErrorView | null;
+  slot: string | null;
+}
+
+export interface WalletTokenView {
+  bank: string;
+  mint: string;
+  label: string;
+  decimals: number;
+  /** 钱包里的数量，原生单位。 */
+  amount: string;
+}
+
+export interface WalletView {
+  wallet: string;
+  sol_lamports: string;
+  tokens: WalletTokenView[];
+  /** 这个钱包在当前池子里的 marginfi 账户；还没有则为 null。 */
+  marginfi_account: string | null;
+  /** 水龙头服务地址(没配置则为 null)。 */
+  faucet_url: string | null;
+}
+
+/** 水龙头(独立进程)的响应。 */
+export interface FaucetResponse {
+  signatures: string[];
+  granted: { label: string; amount: string }[];
+  next_allowed_at: string;
+}
