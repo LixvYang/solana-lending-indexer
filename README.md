@@ -6,7 +6,7 @@
 
 ## 快速开始
 
-完整 indexer 尚未可用。当前可启动数据库、离线查看 M1 剧本计划，以及解码本地交易/账户 fixture:
+M4 存储与 finalized 取块已实现；当前可启动数据库、查看 M1 剧本计划，以及离线解码本地交易/账户 fixture:
 
 ```bash
 docker compose up -d
@@ -23,6 +23,8 @@ pnpm test
 如果沙箱禁止 tsx 的本地 IPC 管道，可用 `pnpm exec node --import tsx scripts/decode-tx.ts <签名>`；本次验证使用这一启动方式。
 
 M3 已实现日志事件、IDL 计算的 zero_copy 账户布局、精确 I80F48 和事件/状态对账；两个新增 CLI 只读本地 IDL/fixture。32 笔 fixture 实际有 25 条事件（任务文件写 24），七份账户与 Anchor 独立对照通过；shares 不变量与数量分子精确相等，事件净流量仍有利息/清算精度/取整差。实测与未验证边界见 [EP5](docs/chapters/ep05-events-and-accounts.md) 和 [D-011](docs/decisions.md)。
+
+M4 提供 `pnpm migrate`、`pnpm ingest --backfill`、`pnpm ingest --tail --once --from <slot>` 和 `pnpm reindex`。采集命令需要 `RPC_URL`，数据库默认连接 `localhost:5433`；`reindex` 从 raw_tx 和保留原始字节的账户快照重建，不调用 RPC。所有新数据库测试使用进程内 PGlite，真实 Postgres / Helius 尚未实测；运行方式与事务边界见 [EP6](docs/chapters/ep06-storage.md) 和 [D-012](docs/decisions.md#d-012-m4-存储与-finalized-采集2026-10-12)。
 
 代码变化时同步本 README、相关 `folder.md` 与文件头部的 INPUT / OUTPUT / POSITION 注释。
 

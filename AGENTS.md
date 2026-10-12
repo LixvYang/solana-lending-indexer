@@ -34,7 +34,17 @@ scripts/     重放、清库、文档片段展开
 
 ## 常用命令
 
-(随实现补充,当前仅有 `docker compose up -d` 启动 Postgres。)
+```bash
+pnpm typecheck && pnpm test                          # 离线，约 20 秒，不需要数据库/网络(数据库用进程内 PGlite)
+docker compose up -d                                 # 真实 Postgres，端口 5433
+pnpm exec tsx scripts/migrate.ts                     # 迁移(幂等)
+pnpm exec tsx scripts/ingest.ts --backfill           # 按签名回填该程序的全部交易，并解码、快照
+pnpm exec tsx scripts/ingest.ts --tail --from S --to E   # 扫一段 slot；不带 --to 则持续跟随
+pnpm exec tsx scripts/reindex.ts                     # 只由 raw_tx 重建解码表(无网络)
+pnpm exec tsx scripts/verify-db.ts                   # 读回对账 + 解码表 md5
+pnpm scenario                                        # 打印剧本计划；加 --execute 才在 devnet 发交易
+```
+需要 `.env`:`RPC_URL`(Helius devnet)、`ANCHOR_WALLET`；`DATABASE_URL` 默认 `postgres://indexer:indexer@localhost:5433/indexer`。
 
 ## Skills
 

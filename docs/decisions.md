@@ -176,3 +176,45 @@ codex 把三个非零差归为"利息"时,依据是方向与上界(推断)。审
 审查时另做三种突变,测试均失败后还原:事件不看调用栈(任何 `Program data` 都当 marginfi)、`toDecimal` 丢符号、`Reader.i128` 当无符号读。
 
 可读性提醒:`reconcile.ts` 与 `event-balances.ts` 的单行很长、逻辑密,适合做测试与结论,不适合直接上屏讲解;EP5 视频里应讲 `layout.ts` / `fixed.ts` / `event.ts` 的片段,对账只展示结论表。
+
+
+## D-012 M4 存储与 finalized 采集（2026-10-12）
+
+**实现取舍**：沿用固定依赖 pg 8.23.1 / PGlite 0.5.8，不新增依赖或 ORM。Db 只有 query / transaction，迁移按 SQL 文件事务应用并记录 schema_migrations。raw_tx 是交易事实；原始 JSON 与失败 err 都保存。instructions 的顶层 inner_index 用 -1，避免 NULL 唯一性/主键问题；events 用日志位置唯一，类型/slot/账户表达式索引对应 EP7 查询。
+
+**精度实测**：本机 PGlite 对小 int8 可返回 number、大 int8 返回 bigint（并非任务描述的一律 bigint）。适配按字段 OID=20 统一十进制字符串，null 保留；pg 默认字符串与 bigint 替身都覆盖。JSONB 金额是字符串，fromJson 按固定 IDL 恢复 bigint，pubkey/string/f64/原始 I80F48 字节不猜测、不误转。全部 25 事件/7 账户的数值类型往返逐字段验证，数据库读回的账户和事件交给 M3 reconcile 后 issues=[]；这仍保留 D-011 的机制差，未修改 expected。
+
+**原子性和重建**：tail 每 slot 的原始写入与游标一起提交；decodePending 在一个事务里删除旧派生行、写指令/事件并更新 DECODER_VERSION（当前1）。rebuildDecoded 清空交易派生表、重置版本并完整重放；account_states 同时保留 raw_data base64，重建只更新解码字段而不删除原始快照。保留原始字节的额外字段是保证账户可离线重建的必要选择，不把纯解码 JSON 当唯一账户事实。
+
+**RPC 与游标**：所有六个 RPC 方法都 finalized，getBlock/getTransaction 显式 json 与 maxSupportedTransactionVersion=0。顶层/inner 调用合并检查 v0 loadedAddresses。-32007 skipped 可推进空 slot；-32009 缺历史、null block/null transaction 必须报错，不能吞缺口。网络错误/429/5xx/短期节点不可用有有限指数退避与超时；错误里 URL 的 api-key 原文/编码值脱敏。backfill 只跳过已有下载，不以已知签名作为分页终点；失败交易仍保存。
+
+**账户采样与 CLI**：owner 在解码前检查，不匹配拒绝当前批次。slot 用 getMultipleAccounts.context.slot；最多100个一批，不保证跨批同时采样。CLI 自动解码后只从成功交易提取协议角色地址，防止失败初始化的未创建/外国账户永久污染快照集合。成功后已关闭的历史账户报告缺失并跳过；直接 snapshotAccounts 默认仍拒绝缺失。旧快照保留但不代表当前存在性，没有关闭墓碑或逐笔历史状态。首次 tail 默认采当前 finalized slot；--from 含起点，有已有 blocks 游标则优先恢复；--once 处理本轮固定最新高度后退出。
+
+**离线证据**：32交易重复入库/解码幂等，18指令/25事件按独立 steps/events 对照；清库重跑和派生重建逐行相等；旧版本行重做、新版行不变；slot写入中途/游标更新失败/解码中途抛错均回滚、重跑无缺漏。七账户owner/context.slot/原始字节重建以及CLI共用同步编排经PGlite与假RPC实测。另临时把 DECODER_VERSION 改为2，用旧行版本1运行升级测试成功后还原1，排除只会处理版本0的测试假设。
+
+**突变实测**：去掉 ON CONFLICT、移除 slot 事务、同时去掉 events 全量与逐签名清理、去掉 owner 检查，四次针对性测试均退出1后还原。单独删 rebuild 的 events 全量清理仍通过，因为 pending 按所有签名等效清理；该等效突变不计为捕获，改坏两处后测试捕获。
+
+**最终检查**：pnpm typecheck 退出0；pnpm test 退出0，85项通过、0失败、0跳过（M4新增28项）。现有依赖bigint原生绑定不可用，测试沿用纯JS回退，未重装依赖。
+
+**没有验证**：没有联网、发送链上交易、重跑剧本或git提交。未启动Docker/Postgres，未运行真实pg迁移/CLI采集/reindex，未连接真实Helius或其他RPC；pg类型/连接事务行为仅由最小Pool替身验证，真实服务端OID/参数/时区与驱动集成仍待验证。CPI/v0/skipped/失败初始化/账户关闭/限流和fetch失败仅合成替身，不是新增链上样本；真实历史保留、长时tail、吞吐/限流压力、多worker迁移/重建并发均未验收。只信finalized、最大交易版本0，不处理链重组。当前账户快照可能领先于入库交易，不能据此证明逐笔历史会计对账；M3未精确分摊利息/f64/ceil的限制仍成立。
+
+### D-012 真实环境验收(2026-10-12,docker Postgres 16 + Helius devnet)
+
+codex 的 85 项离线测试全部通过，但只有连上真实 Postgres 和真实链才暴露了下面 **四个 PGlite 与 fixture 测不出的问题**，均已修复并各补了回归测试：
+
+1. **`pg` 对无参数多语句 SQL 返回结果数组**(迁移文件)，适配层按单个结果处理而崩溃。PGlite 的 `exec` 语义不同，所以离线测试通过。
+2. **成功交易的 `err` 被存成 JSONB `null`** 而不是 SQL `NULL`，`WHERE err IS NULL` 一笔都查不到。离线测试没人断言过这一列。
+3. **devnet 区块里已有 v1 交易**(slot 509953364 的 70 笔里有 5 笔)，`getBlock` 用 `maxSupportedTransactionVersion: 0` 整块报错，indexer 会卡死在该 slot。改为支持到 1(`MAX_TX_VERSION`)；v1 的 JSON 形状与 v0 相同，只是 `addressTableLookups` 换成 `transactionConfig`。同时：形状不认识的交易，与程序无关就跳过，**提到该程序就报错**，不静默漏掉。
+4. **`getBlock`(`rewards:false`)的 `meta.rewards` 是 `null`，`getTransaction` 的是 `[]`**。除此之外两条路径得到的交易逐字段相等。解码不读 rewards，所以结果相同，但 `raw_tx` 的 JSON 不是逐字节相同；同一签名先到先得(`ON CONFLICT DO NOTHING`)。
+
+**实测结果**(devnet，剧本之后回填)：
+- 签名回填：20 笔 `raw_tx` = 18 笔含 marginfi 指令 + 2 笔程序**部署/升级**交易(它们把程序地址作为账户引用，没有 marginfi 指令)；18 条指令、25 条事件，指令分布与独立基准一致；`err IS NULL` 20 笔。
+- 从数据库读回事件与最新账户状态做 `reconcile`：`issues=[]`，两个 bank 的 shares 之和与总量逐位相等。
+- **清库重跑一致**：`reindex` 前后 `instructions` md5 `2057a4eb…`、`events` md5 `d8a66517…` 相同；清库后改用「区块扫描 1 笔 + 签名回填其余」得到的 md5 同样相同。
+- 区块扫描：只扫清算前后 5 个 slot，找到且只找到清算那一笔，游标推进到 509953366，内容与回填那条的 `slot`、`block_time`、`transaction`、`meta`(除 rewards)、`version` 全部相等；同一区间重跑 `inserted=0`。
+
+**未验证 / 局限**：
+- `tail` 逐 slot 调一次 `getBlock`，追赶历史很慢(devnet 约 2.5 slot/s，一天约 20 万次请求)；追赶请用 `--backfill`，`tail` 只适合从当前 finalized 起实时跟随或扫短区间。没有用 `getBlocks` 跳过空 slot。
+- 没有长时间运行、并发、吞吐测试；没有测过 RPC 429 的真实退避。
+- `account_states` 只保存"取快照那一刻的当前状态"，不是逐笔历史；每次运行都会新增一批行(按 `context.slot`)，没有清理策略。关闭账户没有墓碑。
+- 只处理 finalized，不处理重组。

@@ -10,7 +10,7 @@
 | M1 | 确定性剧本 + fixtures + expected.json | EP3 | doing | 2026-10-11：scenario 代码与离线检查已实现；devnet Switchboard 方案见 D-007。未运行 --execute、真实 Crossbar/feed/crank/改价、链上借贷清算、对账或重跑；未生成真实 fixtures |
 | M2 | 指令解码器 | EP4 | done | 2026-10-12：手写 base58 / Reader / IDL Borsh、账户角色、顶层与 inner 指令及离线 CLI；32 笔 fixture 中的 18 条指令与 Anchor 一致；另有对全部 23 个带参数指令的 Anchor 编码往返测试(合成数据)；typecheck 通过，36 项测试通过。非空 v0 地址表与 marginfi CPI 仅合成测试，未联网或发送交易；fixture 之外的指令没有链上样本 |
 | M3 | 事件 / inner instruction / 账户状态解码 | EP5 | done | 2026-10-12：离线日志栈、IDL C 布局、I80F48 与账户解码、精确对账及两个 CLI；32 笔/25 事件、7 账户与 Anchor 对照通过；四种实现突变捕获并还原。差值实测及归因限制见 D-011；未联网、发送交易或提交 git |
-| M4 | 数据库与幂等入库、回填、游标 | EP6 | todo | |
+| M4 | 数据库与幂等入库、回填、游标 | EP6 | done | 2026-10-12：PGlite离线验收、四种破坏突变捕获、版本2升级验证；真实Postgres/RPC待验证，见D-012 |
 | M5 | API + 前端(含 X 光面板) | EP7 | todo | |
 | M6 | 按章节整理提交历史、打 tag、写 docs 与 video 分镜 | 全部 | todo | |
 
@@ -26,9 +26,11 @@
 
 - 2026-10-11:M0、M1 完成。marginfi 与 mocks 已部署到 devnet;12 步剧本一次跑通,32 笔交易 finalized,五类借贷指令全覆盖。
 
+- 2026-10-12:M4 完成并在真实 Postgres + Helius devnet 上验收(D-012)：离线测试之外另发现并修复 4 个只有真实环境才暴露的问题。
+
 ## 下一步
 
-1. M4：先存 raw_tx，再重放 decoder，实现数据库幂等入库/回填/游标。M3 保留 f64 差值，未修改 expected。
+1. M5：基于 M4 的派生表实现只读 API/前端；真实 Postgres 与 RPC 集成仍待验证。M3 保留 f64 差值，未修改 expected。
 2. 验证新 `--run-id` 重跑得到结构一致的结果。
 3. 监控 Switchboard devnet oracle,恢复后评估切回。
 
@@ -50,3 +52,15 @@
 - 实际运行两个 `pnpm exec node --import tsx` CLI 成功；子进程测试覆盖任意当前目录、缺参数、多参数、未知地址/类型。只读本地 fixtures，未使用直接 tsx 启动方式。
 - 未联网、查询 RPC、运行 fetch-* / --execute、重跑剧本、构建/部署程序、发送交易、启动数据库或提交 git。失败/CPI/截断仅合成日志；其他事件/账户版本/枚举值、withdraw_all/破产/非零开仓费/Token-2022 费用未用真实样本验证。
 - 不确定性：利息归因符合正向与上界，但没有中间账户快照，未精确拆出每笔利息/ceil/f64/定点截断的贡献；Carol 清算支出仍按名义 39/38 推算，没有逐位重演上游定点运算。精确验收对象是结束状态与 shares，不把事件净流量当真实余额。
+
+
+## M4 离线验收（2026-10-12）
+
+- 最终 `pnpm typecheck` 退出0；`pnpm test` 退出0，85项通过、0失败、0跳过；新增M4 28项。现有测试依赖提示bigint原生绑定不可用，沿用纯JavaScript回退，未安装或重建依赖。
+
+- 已完整阅读指定文档、EP6和现有core/decoder/store。实现薄Db适配、事务SQL runner/002表、bigint JSON往返、签名幂等raw、版本解码/重建、owner/current-slot快照与原始字节保留、手写finalized RPC/重试脱敏、getBlock规范化、签名分页回填、slot事务游标、三个CLI及pnpm入口。README、各模块清单、EP6、D-012已同步；不新增依赖、不改版本。
+- PGlite实测：32raw重复写入仍32；18instructions/25events与独立steps/events对照；重复解码、清库重跑、全量重建逐行相等；旧版本删除obsolete行且当前行不变；7账户数据库读回后的reconcile.issues=[]。slot中途/游标/解码事务错误均回滚并恢复。CLI共用syncStored实测自动解码与快照，排除失败初始化、报告关闭账户。
+- pg仅用Pool最小替身测试bigint/字符串/OID和固定client的BEGIN/COMMIT/ROLLBACK/release。本机PGlite小BIGINT返回number、大值返回bigint，Db按OID统一字符串，含null断言。JSON按IDL恢复整数，25事件/7账户精确类型往返。
+- 四种临时破坏突变均捕获：去掉ON CONFLICT、移除slot事务、同时漏清events全量和逐签名两处、去掉owner检查；各针对性测试退出1（1项失败）后还原。单独删全量events清理测试仍通过，因逐签名清理等效，此突变不计捕获。另临时DECODER_VERSION=2/旧行=1升级测试退出0，还原版本1。
+- 未联网、调用真实RPC/Helius、运行剧本/部署/发送交易、启动Docker/Postgres或提交git。真实pg迁移、真实CLI正常采集/reindex、RPC重试/跳slot行为、历史保留、长时tail、并发/吞吐均未验收。CLI子进程只运行帮助和非法参数；正常编排由PGlite/假RPC执行。
+- 不确定性：真实服务端/驱动集成仍待验证；当前账户快照不能冒充逐笔历史，关闭账户无墓碑，旧快照不证明当前存在。M3的利息/f64/ceil分摊未被M4消除。

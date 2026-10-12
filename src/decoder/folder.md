@@ -31,4 +31,6 @@ M2/M3：原始指令、日志、账户字节 → 按 IDL 还原字段与调用�
 | m3-test-utils.ts | 测试辅助 | Anchor 标准化与本地账户 fixture 加载 |
 | m3-cli.test.ts | 测试 | 账户/布局 CLI 输出、参数边界、cwd 独立 |
 
+| version.ts | 重放版本 | DECODER_VERSION=1；布局变化时递增，旧 raw_tx 重做 |
+
 SYNC: 增删文件或改变职责时更新此表与文件头部。
