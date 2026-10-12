@@ -4,6 +4,8 @@
 
 > 状态:**主线 M0–M5 已完成并在真实 devnet 上验收**(见 [docs/progress.md](docs/progress.md))。视频与分镜([video/](video/))待录制。
 
+文档同步约定：功能与架构变动同时更新 README、相关 folder.md 和源码 INPUT/OUTPUT/POSITION 注释。
+
 ## 你会得到什么
 
 - 一个**真实部署在 devnet 的借贷池**,和一段可重复的借贷剧本(存款、借款、改价、清算、还款)。
@@ -57,6 +59,8 @@ pnpm exec tsx scripts/serve-api.ts &
 ```
 
 更多命令见 [AGENTS.md](AGENTS.md)。
+
+钱包后端 M7a 已实现，当前仅离线验收：构建/转发/钱包信息、水龙头与价格维护的配置见 [EP8 后端说明](docs/chapters/ep08-wallet-backend.md)。`src/api/types.ts` 为前后端固定契约。API 不读取管理员密钥；`RPC_URL` 未设置时原有只读路由继续工作，钱包路由返回 503。
 
 ## 局限
 

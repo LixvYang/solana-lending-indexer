@@ -9,7 +9,7 @@ mock-feed 使用 src/decoder/switchboard.ts 的唯一 PullFeed 偏移表。本�
 | bank-config.ts | 配置 | 统一剧本银行风险与利率参数 |
 | context.ts / test-context.ts | 上下文 | 剧本资源类型与离线测试上下文 |
 | marginfi.ts / marginfi.test.ts | 指令 | 固定协议指令构造与参数验证 |
-| mock-feed.ts / mock-feed.test.ts | mock 价格 | 复用 decoder 唯一偏移，构造 resultRegion 并由 mocks 写入 |
+| mock-feed.ts / mock-feed.test.ts | mock 价格 | 复用 decoder 唯一偏移，构造 resultRegion 并由 mocks 写入；keeper 可传精确 18 位 bigint 保持价格 |
 | price.ts | 价格入口 | 剧本价格提供者选择 |
 | record.ts / record.test.ts | 记录 | 地址、签名、事件与 JSON 输出 |
 | rpc.ts / rpc.test.ts | 发送 | 剧本交易确认与重试，测试用离线替身 |

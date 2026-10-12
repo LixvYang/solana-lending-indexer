@@ -1,0 +1,14 @@
+# src/faucet
+
+独立进程的专用钱包仅转已有代币；管理员补充逻辑只供 setup 工具使用。限流在内存中，重启清零。
+
+| 文件 | 角色 | 功能 |
+|---|---|---|
+| limit.ts | 纯函数 | 钱包/IP/UTC 日配额与下一次时间 |
+| config.ts | 配置 | 默认数量、环境变量与精确十进制 |
+| service.ts | 转账 | 余额检查、幂等 ATA、专用钱包签名 |
+| server.ts | HTTP | 独立 /faucet、429/503 与 socket IP |
+| setup.ts | 管理员构造 | SOL 转账与 mint-to，仅一次性 CLI 导入 |
+| faucet.test.ts | 测试 | 三种限流、准确转账/ATA、余额不足与 setup 指令 |
+
+SYNC: 修改实现时同步本表、文件头部、README 与 EP8 文档。

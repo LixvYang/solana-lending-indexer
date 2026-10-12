@@ -310,3 +310,27 @@ codex 的 102 项离线测试通过后,接上真实数据库和前端联调,又�
 **各集 tag 的状态**:`ep3-end`…`ep6-end` 是在这个修复**之前**的提交,它们在干净检出下仍有这 5 项失败(分别是 17/36/57/89 项测试里的 5 项,其余全过)。历史没有重写;这 5 项失败只与缺少构建产物有关,先在本地跑一次 `./program/build.sh` 即可,或直接用最终版的 `src/decoder/idl/marginfi.idl.json` 覆盖。
 
 **文档里的数字对应第一次运行**(2026-10-11,slot 509953132–509953399):20 笔原始交易、18 条指令、25 条事件等。之后为验收重跑过 3 次(r2、r3 中途失败,r4 完整),链上该程序的历史因此包含更多交易;现在重新 `ingest --backfill` 得到的行数会更多,数据库里目前只有第一次运行的数据。
+
+## D-015 M7a 钱包后端（2026-10-13，离线验证）
+
+**设计与密钥边界**：沿用现有固定 Anchor/web3.js/SPL 依赖，不新增依赖、不改 `src/api/types.ts`。钱包 API 不加载 ANCHOR_WALLET，构建只签一次性 marginfi 新账户，用户付费/签名。水龙头独立加载 FAUCET_KEYPAIR，只转已有币；setup/keeper/set-price 是独立管理员工具，不被 API 导入。公开 feedKeypair 可写 mock feed，测试币/价格不具备生产安全性。
+
+**交易构建**：以 getPool(db).group 限定 bank；账户从 account_states 按地址最新行再筛 authority/group，解码 raw_data 保留槽位顺序；多个账户选 slot 最大、地址平局稳定排序。首次仅 deposit 初始化新 Keypair，ATA 幂等创建放最前，400,000 CU、confirmed blockhash、无 ALT v0。借款新余额放第一个 inactive；mrgn-0.1.0 withdraw_all 在健康检查前 close balance，remaining 排除该槽。freshness 用当前 RPC feed 的 owner/严格布局与时间戳，max_age=0 按任务用240，半窗含边界，未来时间戳拒绝。注意上游 SwitchboardPull 的0默认与任务不同(D-008)，构建层 fallback 不保证程序也接受。
+
+**模拟/转发与错误**：模拟 sigVerify=false/replaceRecentBlockhash=true，失败仍200含交易。Custom 码从固定 IDL 查表，常见错误中文，未知不回显不可信原文。日志只保留公开 Solana runtime invoke/success/consumed 行，任意 Program log/data 省略；牺牲调试细节以满足不泄漏配置/密钥的硬边界。转发验证每个 required Ed25519 签名、payer signer、1232字节、marginfi程序存在及规范序列化；拒绝 ALT，防止未解析地址绕过守卫。先查历史签名状态，再每2秒重播相同字节，confirmed/finalized 成功或链上失败，60秒截止；RPC单次10秒超时、关闭驱动429自动重试，不打印底层异常。同笔交易重提可直接返回已有状态；timeout不能证明未落链，不自动重建签名。
+
+**水龙头**：精确 UI 数量配置转原生 bigint，默认1000 tUSDC/10 tSOL；用户 ATA 幂等创建由专用钱包付租金，一笔原子转账，无 mint-to。纯限流：钱包10分钟、socket IP滚动1小时5次、UTC日全局2000次；预留在await前，失败也计一次，重启清零。不信任 X-Forwarded-For。缺代币503；SOL/租金不足则固定转账失败503。setup才生成0600专用文件并由管理员转SOL/铸币；已有文件默认不重复补币，失败后--top-up重试。
+
+**keeper**：复用 mock-feed 的 resultRegion/writeIx/feedKeypair；resultRegion新增精确18位bigint入口，已有number行为保留。当前链上i128价格全精度不变，用链上slot/block time写时间；block time为空本轮失败，不用本机时间冒充。失败继续下轮，成功重置计数，连续5次失败退出1。set-price可指定18位小数，后续keeper保持该值；并发改价与keeper读写存在覆盖竞态，演示时先停keeper再改价/重启。
+
+**离线证据**：PGlite、真实fixture字节和假RPC覆盖borrow借款前状态、首个inactive排列、首次部分签名的Ed25519验证、四动作/all/u64往返、半窗价格、IDL中文错误、转发守卫/幂等/2秒重播/60秒超时、无socket HTTP状态和脱敏、钱包精确SPL余额、三种限流/ATA/转账/余额不足、setup指令及keeper精确价格/恢复。borrow比较全部固定角色(group/account/signer/bank/vault/authority/token program/ATA)及remaining与fixture完全一致；外层payer/ComputeBudget/ATA创建不在marginfi角色列表比较里。最新authority变更不回退旧历史账户。
+
+**突变验证**：逐次改坏源文件并还原：remaining顺序反转、首次deposit漏init、删除PriceStale判断、删除marginfi转发检查；四次针对性测试均exit=1、各1项失败。漏init导致一次性账户不再是message signer，测试实测在签名阶段报Cannot sign with non signer key，不冒称该轮进入了init断言。
+
+**未运行/待验证**：全程没有联网、发送交易、重跑剧本、部署或git提交；没有运行正常setup/水龙头/keeper/set-price路径、生成持久密钥文件、启动socket/Docker/Postgres或前端联调。真实devnet模拟结果、真实水龙头转账、真实keeper写入全部待验证。CLI只实际运行help/非法参数，交易与服务编排用假RPC；没有Token-2022/staked asset/ALT支持、真实钱包兼容验证、长期运行或并发负载验收。用户账户发现有indexer延迟(新建未采集时会再创建)、没有关闭墓碑；bank/feed/用户快照可能混slot，bank配置可能已变化，最终以模拟与链上执行为准。限流多进程/重启不共享，不是生产服务。
+
+**最终检查**：pnpm typecheck exit=0；最后原命令pnpm test exit=0，129项通过、0失败、0跳过(新增21项M7a测试)。git diff --check通过；snapshot-docs检查21片段无过期/失败，EP3受共用编码签名影响的片段已自动同步。
+
+**运行时不确定性**：首轮pnpm test在已有src/store/migrate.test.ts发生Node24.10.0/V8 WebAssembly原生崩溃(Check failed: end > addr)，124通过、1文件失败，没有业务断言失败；这是D-013已记录的同类问题，根因仍未定位。没有更改Node/依赖或屏蔽测试，最终复跑结果另记docs/progress.md；单次通过不代表原生问题已修复。现有bigint依赖使用纯JS回退，未重装/重建。
+
+**固定契约的异议(未修改)**：钱包段注释只列两类服务端密钥，没有区分独立水龙头专用钱包与管理员CLI的进程边界；BuildRequest.amount在all=true仍必填但内容忽略，前端需传字符串；SendRequest缺last_valid_block_height，无法精确区分过期与确认超时，只能按60秒返回timeout；共享契约未定义HTTP错误封装(409的error为ProgramErrorView、其他固定错误为字符串、429另有next_allowed_at)。另沿用D-013尚未解决的number健康度“逐位”措辞/混合slot表达问题。

@@ -1,6 +1,6 @@
 # src/api
 
-EP7 只读数据库视图、精确原生数量与 HTTP 路由。不连接 RPC，不写库。
+EP7 只读数据库视图与 M7 钱包构建/转发/查询。只读路由只读 Db；钱包路由使用注入 RPC，不持有管理员密钥，不写库。
 契约 `types.ts` 保持不变；价格来自已入库的 PullFeed，标签来自链下 labels。
 
 | 文件 | 角色 | 功能 |
@@ -14,12 +14,22 @@ EP7 只读数据库视图、精确原生数量与 HTTP 路由。不连接 RPC，
 | spans.ts | 教学 | IDL 顶层参数字节范围、bigint 字符串 |
 | xray.ts | X 光 | 原始 top/inner 指令、base64 日志和数据库原始行 |
 | errors.ts | HTTP | 可公开的固定错误与状态码 |
-| server.ts | HTTP | 六个 GET 路由、CORS、输入验证、固定 500 报错 |
+| server.ts | HTTP | 只读 GET、钱包 GET/POST、CORS、JSON 与固定错误边界 |
 | test-utils.ts | 测试辅助 | PGlite 加载本地 fixtures 与合成价格 |
 | math.test.ts | 测试 | 清算健康金标准、手算利率与超安全整数数量 |
 | queries.test.ts | 测试 | Anchor 快照数量、缺价格、微量债务与 group 费用开关 |
 | activity.test.ts | 测试 | 18 行独立分布、主事件、失败交易和游标平局 |
 | xray.test.ts | 测试 | 原始字节/解码/数据库对照、变量参数和合成 v0 inner |
 | server.test.ts | 测试 | 无 socket 的路由/handle、CORS、参数、脱敏和端口 |
+
+| builder/ | 构建 | v0/Anchor、余额槽位、首次部分签名与模拟 |
+| wallet-rpc.ts | RPC | 注入接口、时钟、10 秒请求超时 |
+| wallet-input.ts | 输入 | 公钥、动作/u64 与 bigint 摘要 |
+| program-error.ts | 错误 | IDL 自定义码、中文提示、安全 runtime 日志 |
+| http-body.ts | HTTP | 流式 64KB JSON 与 POST CORS |
+| send.ts / send.test.ts | 转发 | Ed25519/大小/程序守卫、确认/重播与幂等 |
+| wallet.ts | 查询 | SOL/SPL 余额、当前池子账户与水龙头 URL |
+| wallet-test-utils.ts | 测试辅助 | 无网络 RPC、精确 SPL/价格字节与时钟 |
+| wallet-http.test.ts | 测试 | 钱包与无 socket HTTP 状态/JSON/脱敏 |
 
 SYNC: 修改实现时同步本表、文件头部、README 与 EP7。

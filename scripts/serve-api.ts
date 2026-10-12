@@ -1,5 +1,6 @@
-/** INPUT: DATABASE_URL / PORT。 OUTPUT: 只读 API 服务（默认 8787）。 POSITION: EP7 CLI，无 RPC。 SYNC: 同步 folder.md。 */
+/** INPUT: DATABASE_URL / PORT / 可选 RPC_URL / FAUCET_URL。 OUTPUT: API 服务。 POSITION: EP7/8 CLI，无管理员钱包。 SYNC: 同步 folder.md。 */
 import 'dotenv/config';
+import { rpcConnection } from '../src/api/wallet-rpc';
 import { pgDb } from '../src/store/db';
 import { createApiServer, portNumber } from '../src/api/server';
 function main() {
@@ -10,7 +11,10 @@ function main() {
   }
   if (args.length)
     throw new Error('invalid arguments');
-  const port = portNumber(process.env.PORT), db = pgDb(), server = createApiServer(db);
+  const port = portNumber(process.env.PORT), db = pgDb();
+  // 无 RPC 时只读服务照常启动；这里永不读取 ANCHOR_WALLET。
+  const services = process.env.RPC_URL ? { rpc: rpcConnection(process.env.RPC_URL), faucetUrl: process.env.FAUCET_URL, readUserFromChain: true } : undefined;
+  const server = createApiServer(db, services);
   server.on('error', () => { console.error('API server failed'); void db.close(); process.exitCode = 1; });
   server.listen(port, '127.0.0.1', () => console.log(`API listening on http://localhost:${port}`));
   const stop = () => server.close(() => { void db.close(); });

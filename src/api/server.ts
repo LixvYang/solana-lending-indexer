@@ -1,10 +1,15 @@
-/** INPUT: Db、HTTP method/url。 OUTPUT: route / handle / createApiServer，无框架。 POSITION: EP7 只读 HTTP 边界。 SYNC: 同步 folder.md。 */
+/** INPUT: Db、HTTP/JSON、可选钱包 RPC。 OUTPUT: 只读与钱包路由。 POSITION: EP7/8 HTTP 边界。 SYNC: 同步 folder.md。 */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Db } from '../store/db';
 import { toJson } from '../store/json';
 import { decodeBase58 } from '../core/base58';
 import { getPool, getAccounts, getRateCurve, getActivity, getXray } from './queries';
 import { ApiError } from './errors';
+import { readJson, corsHeaders } from './http-body';
+import { buildTransaction, PriceStale } from './builder';
+import { sendTransaction } from './send';
+import { getWallet } from './wallet';
+import type { WalletServices } from './wallet-rpc';
 export function portNumber(value: string | undefined): number {
   if (value === undefined)
     return 8787;
@@ -22,9 +27,8 @@ function address(value: string | null, width: number): string {
     throw new ApiError(400, width === 32 ? 'invalid bank address' : 'invalid transaction signature');
   }
 }
-export async function route(db: Db, method: string, requestUrl: string) {
-  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': 'http://localhost:5173',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
+export async function route(db: Db, method: string, requestUrl: string, input?: unknown, services?: WalletServices) {
+  const headers = corsHeaders;
   try {
     let url: URL;
     try {
@@ -35,6 +39,20 @@ export async function route(db: Db, method: string, requestUrl: string) {
     }
     if (method === 'OPTIONS')
       return { status: 204, headers, body: '' };
+    const walletRoute = method === 'POST' && ['/api/build', '/api/send'].includes(url.pathname) || method === 'GET' && /^\/api\/wallet\/[^/]+$/.test(url.pathname);
+    if (walletRoute) {
+      if (!services) throw new ApiError(503, 'wallet RPC unavailable');
+      let body;
+      if (url.pathname === '/api/build') body = await buildTransaction(db, services, input);
+      else if (url.pathname === '/api/send') body = await sendTransaction(input, services.rpc, services.clock);
+      else {
+        let wallet;
+        try { wallet = decodeURIComponent(url.pathname.split('/').at(-1)!); }
+        catch { throw new ApiError(400, 'invalid public key'); }
+        body = await getWallet(db, services, wallet);
+      }
+      return { status: 200, headers, body: toJson(body) };
+    }
     if (method !== 'GET')
       throw new ApiError(404, 'not found');
     let body: unknown;
@@ -80,14 +98,20 @@ export async function route(db: Db, method: string, requestUrl: string) {
   catch (error) {
     // 驱动异常可包含带凭据的 URL；只返回固定消息，不记录异常对象或请求 URL。
     return { status: error instanceof ApiError ? error.status : 500, headers,
-      body: toJson({ error: error instanceof ApiError ? error.message : 'internal server error' }) };
+      body: toJson({ error: error instanceof PriceStale ? error.view : error instanceof ApiError ? error.message : 'internal server error' }) };
   }
 }
-export async function handle(db: Db, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const result = await route(db, req.method ?? 'GET', req.url ?? '/');
+export async function handle(db: Db, req: IncomingMessage, res: ServerResponse, services?: WalletServices): Promise<void> {
+  let result;
+  try {
+    const input = req.method === 'POST' ? await readJson(req) : undefined;
+    result = await route(db, req.method ?? 'GET', req.url ?? '/', input, services);
+  } catch (error) {
+    result = { status: error instanceof ApiError ? error.status : 500, headers: corsHeaders, body: toJson({ error: error instanceof ApiError ? error.message : 'internal server error' }) };
+  }
   for (const [key, value] of Object.entries(result.headers))
     res.setHeader(key, value);
   res.statusCode = result.status;
   res.end(result.body);
 }
-export const createApiServer = (db: Db) => createServer((req, res) => { void handle(db, req, res); });
+export const createApiServer = (db: Db, services?: WalletServices) => createServer((req, res) => { void handle(db, req, res, services); });

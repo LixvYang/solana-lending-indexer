@@ -19,6 +19,13 @@
 | store-command.ts | 生命周期 | pg 连接关闭、迁移路径、错误退出 |
 
 | load-labels.ts | 元数据入口 | 迁移后导入本地剧本标签，无 RPC |
-| serve-api.ts | 只读服务 | node:http 默认 8787、六个 GET 路由，无 RPC |
+| serve-api.ts | API 服务 | 默认 8787；可选 RPC 支持钱包；无 RPC 时只读可用，钱包路由 503 |
+
+| faucet.ts | 专用钱包服务 | 默认 8788、转账、内存限流；不读取管理员钱包 |
+| faucet-setup.ts | 管理员工具 | 创建专用钱包、转 SOL 与铸币，--top-up 补充（本次未运行正常路径） |
+| price-keeper.ts | 管理员工具 | 默认 60 秒保持当前价格、更新时间，连续 5 次失败退出 |
+| set-price.ts | 管理员工具 | 精确 18 位价格改价（本次未运行正常路径） |
+| admin-runtime.ts | CLI 共用 | 显式读钥与签名发送，只被独立进程导入 |
+| wallet-cli.test.ts | 离线测试 | 新脚本 help/非法参数，不加载密钥或联网 |
 
 SYNC: 增删脚本或改变职责时更新此表与文件头部。

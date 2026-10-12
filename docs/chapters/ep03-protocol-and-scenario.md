@@ -114,8 +114,9 @@ export function deriveKeypair(label: string): Keypair {
 <!-- snippet: scenario/lib/mock-feed.ts#ep3-mock-feed-region -->
 ```ts
 /** 从 sample_size(2215) 到 max_staleness(2392) 之前的 177 字节：时间戳、结果值、slot。 */
-export function resultRegion(price: number, timestamp: number, slot: number): Buffer {
-  const value = toFixed18(price);
+export function resultRegion(price: number | bigint, timestamp: number, slot: number): Buffer {
+  // keeper 传链上 i128 原值，避免 Number/6 位小数舍入悄悄改变价格。
+  const value = typeof price === 'bigint' ? price : toFixed18(price);
   const buf = Buffer.alloc(OFFSET.maxStaleness - OFFSET.sampleSize);
   buf.writeUInt8(1, 0); // sample_size
   buf.writeBigInt64LE(BigInt(timestamp), 1); // last_update_timestamp，marginfi 用它判断是否过期

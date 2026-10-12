@@ -1,4 +1,4 @@
-/** INPUT: mock 价格、共用 PullFeed 偏移、剧本 Context。 OUTPUT: 构造/写入价格区。 POSITION: EP3 mock 剧本。 SYNC: 同步 folder.md。 */
+/** INPUT: mock 价格(number 或精确 18 位 bigint)、共用 PullFeed 偏移、剧本 Context。 OUTPUT: 构造/写入价格区。 POSITION: EP3 mock 剧本。 SYNC: 同步 folder.md。 */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -37,8 +37,9 @@ export const toFixed18 = (price: number) => BigInt(Math.round(price * 1e6)) * 10
 
 // #region ep3-mock-feed-region
 /** 从 sample_size(2215) 到 max_staleness(2392) 之前的 177 字节：时间戳、结果值、slot。 */
-export function resultRegion(price: number, timestamp: number, slot: number): Buffer {
-  const value = toFixed18(price);
+export function resultRegion(price: number | bigint, timestamp: number, slot: number): Buffer {
+  // keeper 传链上 i128 原值，避免 Number/6 位小数舍入悄悄改变价格。
+  const value = typeof price === 'bigint' ? price : toFixed18(price);
   const buf = Buffer.alloc(OFFSET.maxStaleness - OFFSET.sampleSize);
   buf.writeUInt8(1, 0); // sample_size
   buf.writeBigInt64LE(BigInt(timestamp), 1); // last_update_timestamp，marginfi 用它判断是否过期

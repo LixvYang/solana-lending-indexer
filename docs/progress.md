@@ -14,6 +14,7 @@
 | M5 | API + 前端(含 X 光面板) | EP7 | done | 后端 + 前端已用真实 Postgres/devnet 数据联调并截图检查(浅/深色);联调另发现并修复 4 个问题,见 D-013 |
 | M5a | 只读 API、预言机快照、labels、健康/利率/活动/X 光 | EP7 后端 | done | 2026-10-12:离线 PGlite / fixture / 无 socket HTTP 验证;四处源代码突变捕获并还原;2026-10-13 真实联调修复 4 处(D-013),契约新增 AccountStatus.unknown;104 项测试 |
 | M6 | 按章节整理提交历史、打 tag、写 docs 与 video 分镜 | 全部 | done | 7 章读者文档(含片段展开脚本与检查)、7 份分镜、tag ep3-end…ep7-end;重跑验收通过;发现并修复干净检出下测试失败(D-014) |
+| M7a | 钱包交易构建/转发、钱包信息、水龙头与价格维护 | EP8 后端 | done | 2026-10-13：离线 PGlite/fixture/假 RPC 验收；typecheck exit=0，129 项测试全过；四处源代码突变捕获并还原。真实 devnet/水龙头/keeper 待验证(D-015) |
 
 ## 已完成
 
@@ -83,3 +84,15 @@
 - 一次全套重跑在 `src/api/queries.test.ts` 第三项前原生崩溃：Node v24.10.0 / V8 `Check failed: end > addr`，栈位于 WebAssembly JIT 页释放；该轮101通过、1个文件失败。单独复跑queries三项通过。未改依赖/测试启动参数；崩溃原因未确定，不把复跑成功视为已修复原生问题。
 - 新CLI只实际运行帮助/非法参数；route/handle使用无socket替身，PGlite验证SQL。没有联网、调用真实RPC、发送交易、重跑剧本、构建部署、启动Docker/Postgres、API监听或浏览器/前端联调，没有git提交。
 - 不确定性与契约异议：缺价格状态借用liquidatable（health=null，不证明可清算）；利用率显示裁剪；number健康只验证容差；快照混合slot、无新鲜度/关闭墓碑/并发一致性保证；通用上游风险规则未重演。详见D-013。
+
+
+## M7a 离线验收（2026-10-13）
+
+- 实现 POST /api/build、POST /api/send、GET /api/wallet/:pubkey，包含 v0/400k CU/confirmed blockhash、首次 marginfi Keypair 部分签名、精确金额摘要、操作后槽位 remaining、实时 feed 半窗新鲜度与模拟错误中文翻译。API 不加载管理员密钥；无 RPC 配置时钱包路由 503，原只读路由保持可用。
+- 转发检查 Ed25519 required signatures、payer、marginfi 指令与1232字节；只接受无 ALT 的 v0；同字节重播、confirmed/finalized 状态、60秒含挂起 RPC 的截止与重复提交幂等。HTTP 流式 JSON 限64KB、POST CORS、不回显底层异常/任意程序日志。
+- 独立水龙头使用专用钱包转已有 tUSDC/tSOL，不铸币；内存纯限流、原子 ATA 创建/转账、503余额不足。独立 setup 构造管理员 SOL/铸币指令，keeper 共用 mock-feed 精确18位价格编码与公开feed signer；当前链上时间刷新，失败继续、连续5次退出。新增配置说明、EP8、模块清单与 D-015；API 契约和依赖均未修改。
+- 最终 pnpm typecheck exit=0；pnpm test exit=0：129项通过、0失败、0跳过。新增21项 M7a测试；原有测试均通过。git diff --check通过；snapshot-docs展开了1个受resultRegion签名影响的EP3片段，最后21片段检查均无过期/失败。
+- 首轮全套测试发生已有 Node24.10.0/V8/PGlite WebAssembly 原生崩溃(Check failed: end > addr，src/store/migrate.test.ts)：124通过、1文件失败；最后原命令完整复跑通过。没有更换Node、依赖或改测试启动参数，根因仍未知，不声称已修复。bigint原生绑定不可用，沿用纯JS回退。
+- 四次临时源代码突变均各1项失败、exit=1后还原：remaining逆序(角色/remaining金标准不同)；首次deposit漏init(一次性账户变成非signer，签名阶段失败)；删除PriceStale判断(缺少预期409拒绝)；删除marginfi守卫(任意非marginfi交易未拒绝)。它们与坏输入测试区分记录。
+- 没有联网、发送链上交易、重跑剧本、部署、提交git、生成持久密钥文件、启动Docker/Postgres/socket或前端联调。正常setup/水龙头/keeper/set-price路径没有实际运行；真实devnet模拟、真实转账、真实keeper写入、钱包兼容、长期/负载/多进程限流均待验证。CLI只实际运行help与非法参数，编排只用假RPC。
+- 不确定性：indexer新账户发现延迟、关闭账户无墓碑、混slot/旧bank配置、keeper与改价并发覆盖；上游SwitchboardPull的oracle_max_age=0与任务240秒fallback有差异。timeout可能稍后落链。契约异议(未改)：HTTP错误体无共享类型；SendRequest缺过期高度；all时amount仍必填但忽略；密钥注释未区分水龙头/管理员独立进程。细节见D-015。
