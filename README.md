@@ -11,7 +11,8 @@
 - 一个**真实部署在 devnet 的借贷池**,和一段可重复的借贷剧本(存款、借款、改价、清算、还款)。
 - 一条**手写的解析流水线**:指令(Borsh)、事件(日志)、账户状态(`zero_copy` 布局 + I80F48 定点数),全部带测试,并用 Anchor 官方 coder 交叉校验。
 - **幂等、可回填、可重放**的 Postgres 存储:清库重跑,解码表的 md5 完全一致。
-- 一个**只读 API 和前端**,其中的"X 光"能并排看到一笔交易的原始字节、解码结果、数据库行。
+- 一个**API 和前端**,其中的"X 光"能并排看到一笔交易的原始字节、解码结果、数据库行。
+- **钱包交互**(可选的第 8 集):连接 devnet 钱包,对借贷池存款、取款、借款、还款;有水龙头、价格维护进程和端到端验收脚本。
 
 ## ⚠️ 先说清楚:价格是"布局一致的 mock"
 
@@ -28,6 +29,7 @@ devnet 上 Switchboard 的 oracle 目前整体离线(实测:191 个 oracle 账�
 | EP5 | 解析事件与账户状态 | [ep05](docs/chapters/ep05-events-and-accounts.md) | [script](video/ep05-script.md) | `ep5-end` |
 | EP6 | 存储设计 | [ep06](docs/chapters/ep06-storage.md) | [script](video/ep06-script.md) | `ep6-end` |
 | EP7 | 前端与总结 | [ep07](docs/chapters/ep07-frontend.md) | [script](video/ep07-script.md) | `ep7-end` |
+| EP8(可选) | 钱包交互 | [ep08](docs/chapters/ep08-wallet.md) | [script](video/ep08-script.md) | `ep8-end` |
 
 从 EP3 起每一集一个 git tag,`git checkout ep4-end` 就是第 4 集结束时的代码。历史是线性的:各集的提交按顺序排列,没有重写。
 
@@ -54,7 +56,7 @@ pnpm exec tsx scripts/migrate.ts
 pnpm exec tsx scripts/ingest.ts --backfill
 pnpm exec tsx scripts/load-labels.ts
 pnpm exec tsx scripts/verify-db.ts         # 读回对账 + 解码表 md5
-pnpm exec tsx scripts/serve-api.ts &
+pnpm exec tsx scripts/serve-api.ts &       # 数据库里有多个池子时设 POOL_GROUP
 (cd web && pnpm install && pnpm dev)       # http://localhost:5173
 ```
 
@@ -69,7 +71,7 @@ pnpm exec tsx scripts/serve-api.ts &
 - **账户状态只有快照**,没有逐笔历史状态。
 - **只解码剧本涉及的指令**,其余原样存为 `unknown`。
 - **`tail` 追不动历史**(逐 slot 一次请求),追赶请用 `--backfill`。
-- **前端只读**,没有钱包连接。
+- **钱包交互仅限 devnet 测试币**,水龙头限流在内存里,没有真正的防刷(见 EP8)。
 - 文档里的数字对应第一次运行(见 [D-014](docs/decisions.md));之后为验收重跑过几次,现在重新回填会得到更多行。
 - 没有压测,没有长时间运行测试,没有在别的协议上验证过"换 IDL 即可"。
 
@@ -82,7 +84,7 @@ program/     marginfi 固定版本的构建与部署脚本(上游源码不入库
 scenario/    确定性剧本
 fixtures/    真实运行的原始数据(解码器的金标准)
 src/         core(字节工具)、decoder、ingest、store、api
-web/         前端(Vite + React)
+web/         前端(Vite + React),含钱包交互
 scripts/     CLI 与文档片段展开(snapshot-docs)
 ```
 

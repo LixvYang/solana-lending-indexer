@@ -334,3 +334,21 @@ codex 的 102 项离线测试通过后,接上真实数据库和前端联调,又�
 **运行时不确定性**：首轮pnpm test在已有src/store/migrate.test.ts发生Node24.10.0/V8 WebAssembly原生崩溃(Check failed: end > addr)，124通过、1文件失败，没有业务断言失败；这是D-013已记录的同类问题，根因仍未定位。没有更改Node/依赖或屏蔽测试，最终复跑结果另记docs/progress.md；单次通过不代表原生问题已修复。现有bigint依赖使用纯JS回退，未重装/重建。
 
 **固定契约的异议(未修改)**：钱包段注释只列两类服务端密钥，没有区分独立水龙头专用钱包与管理员CLI的进程边界；BuildRequest.amount在all=true仍必填但内容忽略，前端需传字符串；SendRequest缺last_valid_block_height，无法精确区分过期与确认超时，只能按60秒返回timeout；共享契约未定义HTTP错误封装(409的error为ProgramErrorView、其他固定错误为字符串、429另有next_allowed_at)。另沿用D-013尚未解决的number健康度“逐位”措辞/混合slot表达问题。
+
+### D-015 真实 devnet 与浏览器联调补充(2026-10-13)
+
+codex 的 M7a 离线测试通过后,接上真实 devnet(Helius)、真实 Postgres、真实浏览器验证。**钱包全流程通过**:用全新钱包经真实 HTTP 接口走完 领币 → 首次存款(自动建账户)→ 借款(真实负债)→ `repay_all` → 再存款(不重复建账户)→ 两次 `withdraw_all`(`scripts/e2e-wallet.ts`),并在浏览器里用开发测试钱包经界面走了 领币 → 预览 → 签名 → 发送 → 索引器捡到 → 页面显示。
+
+联调中发现并修复(各补回归测试):
+1. **账户发现依赖索引器快照**:用户刚存款、索引器未追上时,下一次存款被当成首次而**重复创建账户**;快照里的槽位过期也会让 remaining 顺序排错。改为用户账户内容**始终从链上读**(`readUserFromChain`),地址先查库、查不到按 `group+authority` 用 `getProgramAccounts` 过滤。
+2. **多个 group 并存**:重跑剧本新建 group,`--follow` 把它们全部入库,`pool.group` 为 null。新增 `POOL_GROUP` 环境变量,池子/账户/活动流都按它过滤。
+3. **CORS 写死 localhost**:页面用 `127.0.0.1` 打开时水龙头(另一端口)被浏览器拦下。改为按 `Origin` 匹配白名单(`CORS_ORIGINS` 可追加)。
+4. **`oracle_max_age = 0` 默认 240 是编造的**:上游 `get_oracle_max_age` 对 SwitchboardPull 的 0 就是 0(只有 SwitchboardV2/Pyth 有默认)。去掉默认值。
+5. **同一 bank 的存款会被"借款"先扣**(marginfi 语义,非 bug):e2e 剧本曾因此误报;界面加提示,剧本改用另一种抵押品。模拟正确地拦截并翻译了 `NoLiabilityFound`。
+6. e2e 脚本成功后进程不退出(`sendAndConfirmTransaction` 的 WebSocket 订阅),补 `process.exit(0)` 与请求超时。
+
+另:新增 `ingest --follow`(每 5 秒一次按签名查询,遇到已知签名即停);`tail` 的旧游标会让它从几天前开始追,且逐 slot 请求会很快耗光 RPC 额度。
+
+**真实测得的数字**:首次存款 27,328 CU、借款 51,503、`repay_all` 35,811、再存款 22,579、`withdraw_all` 36,733 / 22,424;借 200 tUSDC 又还清后钱包里少 0.000003 tUSDC(利息)。
+
+**仍未验证**:真实 Phantom/Solflare(只用开发测试钱包走了签名流程,它是 web3.js 的 Keypair,与扩展钱包的签名确认弹窗、网络切换行为不同);水龙头限流在真实并发下的表现;价格维护进程长时间运行;keeper 与 `set-price` 并发的覆盖竞态;Token-2022。
