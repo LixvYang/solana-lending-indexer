@@ -17,3 +17,10 @@ export const short = (address: string | null, n = 4) => (address ? `${address.sl
 export const fmtTime = (iso: string | null) => (iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false }) : '—');
 // 权重在链上是 I80F48 定点数，0.8 存成 0.79999…；显示时取 3 位小数，别把定点数的舍入噪声摆给读者。
 export const fmtWeight = (w: number) => String(Number(w.toFixed(3)));
+
+/** 把用户输入的代币数量(如 "1000.5")转成原生单位字符串；格式不对或小数位超过精度返回 null。全程 BigInt。 */
+export function toNative(ui: string, decimals: number): string | null {
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(ui.trim());
+  if (!m || (m[2]?.length ?? 0) > decimals) return null;
+  return (BigInt(m[1]) * 10n ** BigInt(decimals) + BigInt((m[2] ?? '').padEnd(decimals, '0') || '0')).toString();
+}

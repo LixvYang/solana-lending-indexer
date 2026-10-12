@@ -7,6 +7,8 @@ import { RateCurve } from './RateCurve';
 import { Accounts } from './Accounts';
 import { Activity } from './Activity';
 import { Xray } from './Xray';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { WalletPanel } from './wallet/WalletPanel';
 import { short } from './format';
 
 type Theme = 'auto' | 'light' | 'dark';
@@ -38,12 +40,16 @@ export function App() {
       <div className="top">
         <div><h1>借贷池 X 光</h1>
           <div className="sub">marginfi mrgn-0.1.0 · devnet{pool.data ? <> · 程序 <span className="mono">{short(pool.data.program, 6)}</span></> : null}</div></div>
-        <button className="theme" onClick={cycle} aria-label="切换主题">主题：{theme === 'auto' ? '跟随系统' : theme === 'light' ? '浅色' : '深色'}</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <WalletMultiButton />
+          <button className="theme" onClick={cycle} aria-label="切换主题">主题：{theme === 'auto' ? '跟随系统' : theme === 'light' ? '浅色' : '深色'}</button>
+        </div>
       </div>
       {error && <div className="err">无法读取数据：{error}。请确认 API 已启动（pnpm exec tsx scripts/serve-api.ts）。</div>}
       {pool.data && (
         <div className={pool.stale ? 'loading' : ''}>
           <Kpis pool={pool.data} />
+          <div style={{ marginBottom: 16 }}><WalletPanel banks={pool.data.banks} accounts={accounts.data ?? []} /></div>
           <div style={{ marginBottom: 16 }}><BankTable pool={pool.data} selected={selected} onSelect={setBank} /></div>
           <div className="grid two">
             <div className="card"><h2>利率曲线<small>{curve.data?.label ?? ''}</small></h2>{curve.data ? <RateCurve curve={curve.data} /> : <div className="muted">加载中…</div>}</div>

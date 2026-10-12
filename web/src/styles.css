@@ -97,3 +97,21 @@ details.data { margin-top: 10px; } details.data summary { cursor: pointer; color
 .field .k { color: var(--ink-2); min-width: 110px; } .field .v { word-break: break-all; }
 pre.json { margin: 0; font: 12px/1.45 ui-monospace, 'SF Mono', Menlo, monospace; white-space: pre-wrap; word-break: break-all; background: color-mix(in srgb, var(--ink) 4%, transparent); padding: 8px; border-radius: 8px; max-height: 280px; overflow: auto; }
 .block { margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--grid); }
+
+/* 钱包面板 */
+.wtwo { grid-template-columns: 1fr 1fr; }
+@media (max-width: 860px) { .wtwo { grid-template-columns: 1fr; } }
+.seg { display: inline-flex; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--ring); overflow: hidden; margin-bottom: 10px; }
+.seg button { background: transparent; border: 0; padding: 6px 14px; cursor: pointer; color: var(--ink-2); }
+.seg button.on { background: color-mix(in srgb, var(--s1) 14%, transparent); color: var(--ink); font-weight: 600; }
+.field-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; color: var(--ink-2); font-size: 13px; }
+.field-row.check { gap: 6px; }
+.field-row select, .field-row input[type='text'], .field-row input:not([type]), .field-row input[inputmode] { flex: 1; font: inherit; color: var(--ink); background: var(--surface); border: 0; border-radius: 8px; padding: 6px 10px; box-shadow: inset 0 0 0 1px var(--ring); min-width: 0; }
+.preview { padding: 10px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--ring); margin-top: 6px; }
+.ok { color: var(--good-text); } a { color: var(--s1); }
+.wallet-adapter-button { font-family: inherit !important; height: 32px !important; border-radius: 8px !important; font-size: 13px !important; padding: 0 14px !important; }
+.wallet-adapter-button { background: var(--s1) !important; color: #fff !important; }
+.wallet-adapter-button:not([disabled]):hover { background: color-mix(in srgb, var(--s1) 85%, #000) !important; }
+.wallet-adapter-dropdown-list { background: var(--surface) !important; }
+.wallet-adapter-dropdown-list-item { color: var(--ink) !important; }
+.theme:disabled { opacity: 0.4; cursor: not-allowed; }

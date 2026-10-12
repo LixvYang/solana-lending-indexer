@@ -17,3 +17,8 @@ scenario/out/
 # 密钥(剧本账户确定性派生,不落盘)
 *.keypair.json
 **/id.json
+
+# codex 生成的临时工作笔记(planning-with-files),不属于项目
+/findings.md
+/progress.md
+/task_plan.md

@@ -6,6 +6,8 @@
 import type { AccountView, ActivityItem, BankView, PoolView, RateCurveView, RatePoint } from '@contract';
 import run from '../../fixtures/m1-run.json';
 import xray from './mock-xray.json';
+import { PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { b64 } from './wallet/chain';
 
 const a = run.addresses;
 const curve = { optimal_utilization: 0.5, plateau_rate: 0.6, max_rate: 3, fee_rate: 0.06, fee_fixed_apr: 0.04 };
@@ -68,6 +70,23 @@ export function installMock() {
       const body: RateCurveView = { bank: b.address, label: b.label, points: Array.from({ length: 101 }, (_, i) => rates(i / 100)), current: rates(b.utilization) };
       return ok(body);
     }
+    if (url.pathname.startsWith('/api/wallet/')) {
+      return ok({ wallet: url.pathname.split('/').pop(), sol_lamports: '2500000000', marginfi_account: null, faucet_url: 'http://localhost:8788',
+        tokens: banks.map((b) => ({ bank: b.address, mint: b.mint, label: b.label, decimals: b.decimals, amount: b.label === 'tUSDC' ? '1000000000' : '10000000000' })) });
+    }
+    if (url.pathname === '/api/build') {
+      // 假交易：一笔 0 lamports 的自转账，只为让钱包有东西可签。
+      const req = JSON.parse(String(init?.body ?? '{}'));
+      const payer = new PublicKey(req.wallet);
+      const tx = new VersionedTransaction(new TransactionMessage({ payerKey: payer, recentBlockhash: PublicKey.default.toBase58(),
+        instructions: [SystemProgram.transfer({ fromPubkey: payer, toPubkey: payer, lamports: 0 })] }).compileToV0Message());
+      const tooMuch = req.action === 'borrow' && BigInt(req.amount || '0') > 4000000000n;
+      return ok({ transaction: b64.encode(tx.serialize()), last_valid_block_height: 1, creates_account: req.action === 'deposit', marginfi_account: payer.toBase58(),
+        summary: `${({ deposit: '存入', withdraw: '取出', borrow: '借出', repay: '还款' } as Record<string, string>)[req.action]} ${req.all ? '全部' : req.amount} (原生单位)`,
+        simulation: tooMuch ? { ok: false, logs: [], units_consumed: null, error: { code: 6010, name: 'RiskEngineInitRejected', message: '借款后健康度不足,请减少借款数量或先增加抵押' } }
+          : { ok: true, logs: [], units_consumed: 62000, error: null } });
+    }
+    if (url.pathname === '/api/send') return ok({ signature: '5mockSignature1111111111111111111111111111111111111111111111111111111111111111111111', status: 'confirmed', error: null, slot: '1' });
     const sig = url.pathname.split('/').pop()!;
     const x = (xray as Record<string, unknown>)[sig] ?? Object.values(xray)[0];
     return ok(x);
