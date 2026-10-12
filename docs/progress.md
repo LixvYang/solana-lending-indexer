@@ -10,7 +10,7 @@
 | M1 | 确定性剧本 + fixtures + expected.json | EP3 | doing | 2026-10-11：scenario 代码与离线检查已实现；devnet Switchboard 方案见 D-007。未运行 --execute、真实 Crossbar/feed/crank/改价、链上借贷清算、对账或重跑；未生成真实 fixtures |
 | M2 | 指令解码器 | EP4 | done | 2026-10-12：手写 base58 / Reader / IDL Borsh、账户角色、顶层与 inner 指令及离线 CLI；32 笔 fixture 中的 18 条指令与 Anchor 一致；另有对全部 23 个带参数指令的 Anchor 编码往返测试(合成数据)；typecheck 通过，36 项测试通过。非空 v0 地址表与 marginfi CPI 仅合成测试，未联网或发送交易；fixture 之外的指令没有链上样本 |
 | M3 | 事件 / inner instruction / 账户状态解码 | EP5 | done | 2026-10-12：离线日志栈、IDL C 布局、I80F48 与账户解码、精确对账及两个 CLI；32 笔/25 事件、7 账户与 Anchor 对照通过；四种实现突变捕获并还原。差值实测及归因限制见 D-011；未联网、发送交易或提交 git |
-| M4 | 数据库与幂等入库、回填、游标 | EP6 | done | 2026-10-12：PGlite离线验收、四种破坏突变捕获、版本2升级验证；真实Postgres/RPC待验证，见D-012 |
+| M4 | 数据库与幂等入库、回填、游标 | EP6 | done | 离线 89 项测试 + 真实 Postgres/Helius devnet 验收(D-012):清库重跑 md5 一致、读回对账 issues=[]；真实环境另发现并修复 4 个问题 |
 | M5 | API + 前端(含 X 光面板) | EP7 | todo | |
 | M6 | 按章节整理提交历史、打 tag、写 docs 与 video 分镜 | 全部 | todo | |
 
