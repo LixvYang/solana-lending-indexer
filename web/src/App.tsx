@@ -39,7 +39,8 @@ export function App() {
     <div className="wrap">
       <div className="top">
         <div><h1>借贷池 X 光</h1>
-          <div className="sub">marginfi mrgn-0.1.0 · devnet{pool.data ? <> · 程序 <span className="mono">{short(pool.data.program, 6)}</span></> : null}</div></div>
+          <div className="sub">marginfi mrgn-0.1.0 · devnet{pool.data ? <> · 程序 <span className="mono">{short(pool.data.program, 6)}</span></> : null}
+            {pool.updatedAt && <span className="muted"> · 更新于 {pool.updatedAt.toLocaleTimeString('zh-CN', { hour12: false })}</span>}</div></div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <WalletMultiButton />
           <button className="theme" onClick={cycle} aria-label="切换主题">主题：{theme === 'auto' ? '跟随系统' : theme === 'light' ? '浅色' : '深色'}</button>
@@ -47,7 +48,7 @@ export function App() {
       </div>
       {error && <div className="err">无法读取数据：{error}。请确认 API 已启动（pnpm exec tsx scripts/serve-api.ts）。</div>}
       {pool.data && (
-        <div className={pool.stale ? 'loading' : ''}>
+        <div>
           <Kpis pool={pool.data} />
           <div style={{ marginBottom: 16 }}><WalletPanel banks={pool.data.banks} accounts={accounts.data ?? []} /></div>
           <div style={{ marginBottom: 16 }}><BankTable pool={pool.data} selected={selected} onSelect={setBank} /></div>

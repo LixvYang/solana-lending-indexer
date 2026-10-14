@@ -115,3 +115,5 @@ pre.json { margin: 0; font: 12px/1.45 ui-monospace, 'SF Mono', Menlo, monospace;
 .wallet-adapter-dropdown-list { background: var(--surface) !important; }
 .wallet-adapter-dropdown-list-item { color: var(--ink) !important; }
 .theme:disabled { opacity: 0.4; cursor: not-allowed; }
+.swapbox { padding: 10px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--ring); }
+.swapbox input, .swapbox select { font: inherit; color: var(--ink); background: var(--surface); border: 0; border-radius: 8px; padding: 4px 8px; box-shadow: inset 0 0 0 1px var(--ring); }

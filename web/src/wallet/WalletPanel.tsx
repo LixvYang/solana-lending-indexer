@@ -6,6 +6,7 @@ import { usePoll } from '../hooks';
 import { fmtToken, fmtUsd, short, toNative } from '../format';
 import { StatusBadge } from '../Accounts';
 import { b64, chain, explorer } from './chain';
+import { GetTokens } from './GetTokens';
 
 const ACTIONS: { id: WalletAction; label: string; allLabel?: string }[] = [
   { id: 'deposit', label: '存款' },
@@ -29,7 +30,6 @@ export function WalletPanel({ banks, accounts }: { banks: BankView[]; accounts: 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<SendResponse | null>(null);
-  const [faucetNote, setFaucetNote] = useState<string | null>(null);
 
   const bank = useMemo(() => banks.find((b) => b.address === bankAddress) ?? banks[0], [banks, bankAddress]);
   useEffect(() => { setBuilt(null); setSent(null); setError(null); }, [action, bankAddress, amount, all, address]);
@@ -57,18 +57,6 @@ export function WalletPanel({ banks, accounts }: { banks: BankView[]; accounts: 
     finally { setBusy(null); }
   };
 
-  const claim = async () => {
-    if (!address || !info.data?.faucet_url) return;
-    setBusy('领取中…'); setFaucetNote(null);
-    try {
-      const r = await chain.faucet(info.data.faucet_url, address);
-      // 水龙头返回的是原生单位，换成人能读的数量。
-      const human = r.granted.map((g) => `${fmtToken(g.amount, info.data?.tokens.find((t) => t.label === g.label)?.decimals ?? 0)} ${g.label}`);
-      setFaucetNote(`已到账:${human.join('、')}`);
-    } catch (e) { setFaucetNote(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(null); }
-  };
-
   if (!connected) return (
     <div className="card"><h2>我来操作<small>仅限 devnet 测试币</small></h2>
       <p className="label">点右上角“连接钱包”,切换到 <b>devnet</b>,就可以对这个借贷池存款、借款、还款、取款。首次存款会自动为你创建 marginfi 账户。</p>
@@ -88,7 +76,7 @@ export function WalletPanel({ banks, accounts }: { banks: BankView[]; accounts: 
             {w?.tokens.map((t) => <tr key={t.mint}><td>{t.label}</td><td className="n">{fmtToken(t.amount, t.decimals)}</td></tr>)}
           </tbody></table>
           {sol != null && sol < 0.01 && <p className="err">SOL 不足以付手续费,请到 <a href="https://faucet.solana.com" target="_blank" rel="noreferrer">faucet.solana.com</a> 领取。</p>}
-          {w?.faucet_url && <p><button className="theme" onClick={claim} disabled={Boolean(busy)}>领取测试币</button> {faucetNote && <span className="muted">{faucetNote}</span>}</p>}
+          {w?.faucet_url && address && <GetTokens address={address} faucetUrl={w.faucet_url} tokens={w.tokens} solLamports={BigInt(w.sol_lamports)} />}
           <div className="label" style={{ marginTop: 12 }}>我在池子里的账户</div>
           {mine ? (
             <div>

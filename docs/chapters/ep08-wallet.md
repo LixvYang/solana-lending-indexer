@@ -97,7 +97,13 @@ const simulation = { ok: simulated.err === null, error: simulated.err === null ?
 
 <!-- snippet: src/api/send.ts#ep8-send-guard -->
 ```ts
-export function guardTransaction(input: unknown): { bytes: Buffer; signature: string } {
+/**
+ * 默认只接受含 marginfi 指令的交易(钱包转发接口)。水龙头的兑换台复用同一套签名/格式检查，
+ * 但允许另一组程序——由调用方传入 accept，所以这里的检查不会被放宽给钱包转发接口。
+ */
+const hasMarginfi = (programs: string[]) => programs.includes(marginfiIdl.address);
+export function guardTransaction(input: unknown, accept: (programs: string[], signers: string[]) => boolean = hasMarginfi,
+  rejection = 'missing marginfi instruction'): { bytes: Buffer; signature: string } {
   const value = objectBody(input).transaction;
   if (typeof value !== 'string' || !value.length || value.length > 1644 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new ApiError(400, 'invalid transaction encoding/size');
   const bytes = Buffer.from(value, 'base64');
@@ -108,7 +114,9 @@ export function guardTransaction(input: unknown): { bytes: Buffer; signature: st
   if (tx.version !== 0 || tx.message.addressTableLookups.length) throw new ApiError(400, 'only v0 transactions without lookup tables are supported');
   const message = tx.message, count = message.header.numRequiredSignatures;
   if (!count || !message.isAccountSigner(0) || tx.signatures.length !== count) throw new ApiError(400, 'fee payer must be a signer');
-  if (!message.compiledInstructions.some(ix => message.staticAccountKeys[ix.programIdIndex]?.toBase58() === marginfiIdl.address)) throw new ApiError(400, 'missing marginfi instruction');
+  const programs = message.compiledInstructions.map(ix => message.staticAccountKeys[ix.programIdIndex]?.toBase58() ?? '');
+  const signers = message.staticAccountKeys.slice(0, count).map(k => k.toBase58());
+  if (!programs.length || !accept(programs, signers)) throw new ApiError(400, rejection);
   // 非零字节不是签名证据；验证所有 required signatures，尤其是 payer 的 Ed25519 签名。
   // 服务端绝不补签或承担费用；ALT 拒绝，避免未解析的地址绕过程序检查。
   const data = message.serialize();
@@ -121,6 +129,43 @@ export function guardTransaction(input: unknown): { bytes: Buffer; signature: st
 }
 ```
 <!-- /snippet -->
+
+## 获取测试币的第二种方式:用 SOL 兑换
+
+水龙头免费但有限流。想要更多,可以**用 SOL 兑换**。测试币是我们自己发行的,没有真实的 AMM 池子,所以做成一个**固定汇率的原子兑换台**:一笔交易里同时有两件事——用户转 SOL 给兑换台、兑换台转代币给用户。
+
+<!-- snippet: src/faucet/swap.ts#ep8-swap-tx -->
+```ts
+// 一笔交易里两件事:用户转 SOL 给兑换台 + 兑换台转代币给用户。付手续费和 ATA 租金的是用户(payerKey = wallet)，
+// 兑换台只是"转出代币"的授权签名者，不垫付任何 SOL。兑换台的签名覆盖整条消息，用户改动任何内容都会让它失效。
+const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+  createAssociatedTokenAccountIdempotentInstruction(wallet, userAta, wallet, token.mint),
+  SystemProgram.transfer({ fromPubkey: wallet, toPubkey: payer.publicKey, lamports }),
+  createTransferInstruction(deskAta, userAta, payer.publicKey, out)];
+const block = await rpc.getLatestBlockhash('confirmed');
+const tx = new VersionedTransaction(new TransactionMessage({ payerKey: wallet, recentBlockhash: block.blockhash, instructions }).compileToV0Message());
+tx.sign([payer]);
+```
+<!-- /snippet -->
+
+几个关键点:
+
+- **原子的。** 两件事在同一笔交易里,要么都发生要么都不发生,不存在"付了 SOL 没收到币"。
+- **兑换台先签名,用户再签名。** 兑换台的签名覆盖整条交易消息,用户若改动任何内容,兑换台的签名就失效,交易失败。
+- **手续费和账户租金由用户付**,兑换台只是"转出代币"的授权签名者,不垫付任何 SOL。收到的 SOL 反而补充了兑换台自己的余额。
+- **取整永远向下**,不会多给:
+
+<!-- snippet: src/faucet/swap.ts#ep8-swap-math -->
+```ts
+/** 换出多少:整数运算、向下取整,永远不会多给。例如 0.1 SOL × (50 tUSDC = 50_000_000 原生单位/SOL) = 5_000_000。 */
+export const swapOut = (lamports: bigint, perSolNative: bigint): bigint => lamports * perSolNative / LAMPORTS_PER_SOL;
+```
+<!-- /snippet -->
+
+- **转发接口只放行兑换交易。** 兑换台自己的转发接口会检查:兑换台是签名者、所有签名有效、只含 计算预算 / 系统 / 代币 / ATA 这四个程序。复用的是钱包转发接口的同一套签名检查,但程序白名单由调用方传入,**不会放宽钱包转发接口本身**。
+- **汇率是固定的 mock。** 默认 1 SOL = 1 tSOL = 50 tUSDC(与池子里 tSOL = $50 一致),可用 `SWAP_TSOL_PER_SOL`、`SWAP_TUSDC_PER_SOL` 调整;单笔限额 0.001 ~ 1 SOL。**这不是市场价**,视频里要说明。
+
+真实 devnet 上用界面点过:0.02 SOL → 1 tUSDC,余额 1,000 → 1,001,界面预估的数量和实际到账一致。
 
 ## 价格维护进程
 
@@ -178,7 +223,7 @@ pnpm exec tsx scripts/e2e-wallet.ts
 
 | 步骤 | 结果 | 计算单元 |
 |---|---|---:|
-| 领测试币 | 1,000 tUSDC + 10 tSOL 到账 | — |
+| 领测试币(水龙头) | 1,000 tUSDC + 10 tSOL 到账 | — |
 | 首次存款 10 tSOL(自动创建账户) | ✓ | 27,328 |
 | 借 200 tUSDC | ✓ 借份额 199,999,910 | 51,503 |
 | 还清(`repay_all`) | ✓ 借份额归零 | 35,811 |

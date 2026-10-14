@@ -1,4 +1,4 @@
-import type { BuildRequest, BuildResponse, FaucetResponse, SendResponse, WalletView } from '@contract';
+import type { BuildRequest, BuildResponse, FaucetResponse, SendResponse, SwapQuoteRequest, SwapQuoteResponse, SwapRatesView, WalletView } from '@contract';
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -18,6 +18,14 @@ export const chain = {
   send: (transaction: string) => call<SendResponse>('/api/send', post({ transaction })),
   // FAUCET_URL 带不带 /faucet 后缀都行。
   faucet: (url: string, wallet: string) => call<FaucetResponse>(url.endsWith('/faucet') ? url : `${url}/faucet`, post({ wallet })),
+};
+
+// 兑换台和水龙头是同一个独立进程;faucet_url 可能带 /faucet 后缀,取它的根地址。
+export const deskBase = (faucetUrl: string) => faucetUrl.replace(/\/faucet$/, '');
+export const swap = {
+  rates: (base: string) => call<SwapRatesView>(`${base}/swap/rates`),
+  quote: (base: string, request: SwapQuoteRequest) => call<SwapQuoteResponse>(`${base}/swap/quote`, post(request)),
+  send: (base: string, transaction: string) => call<SendResponse>(`${base}/swap/send`, post({ transaction })),
 };
 
 export const explorer = (signature: string) => `https://explorer.solana.com/tx/${signature}?cluster=devnet`;

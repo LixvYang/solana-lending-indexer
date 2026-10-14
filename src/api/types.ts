@@ -258,3 +258,36 @@ export interface FaucetResponse {
   granted: { label: string; amount: string }[];
   next_allowed_at: string;
 }
+
+/* ───────────────────────── SOL 兑换测试币 ─────────────────────────
+ * 测试币是自己发行的,没有真实的 AMM 池子。兑换台是固定汇率的"原子兑换":一笔交易里同时
+ * "用户转 SOL 给兑换台"和"兑换台转代币给用户",兑换台先签名、用户再签名,要么都发生要么都不发生。
+ * 手续费和账户租金由用户付,兑换台只提供代币。汇率是固定的 mock,不是市场价。
+ */
+export type SwapToken = 'tSOL' | 'tUSDC';
+
+export interface SwapRatesView {
+  /** 1 SOL 换多少个该代币(UI 单位的十进制字符串)。 */
+  rates: Record<SwapToken, string>;
+  min_sol: string;
+  max_sol: string;
+}
+
+export interface SwapQuoteRequest {
+  wallet: string;
+  token: SwapToken;
+  /** 用多少 SOL 换(UI 单位,如 "0.1")。 */
+  sol: string;
+}
+
+export interface SwapQuoteResponse {
+  /** base64 的 v0 交易:已由兑换台签名,还差用户的签名。 */
+  transaction: string;
+  last_valid_block_height: number;
+  token: SwapToken;
+  sol_lamports: string;
+  /** 将收到的代币数量,原生单位。 */
+  out_amount: string;
+  out_decimals: number;
+  summary: string;
+}

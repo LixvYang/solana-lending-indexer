@@ -10,7 +10,13 @@ import { ApiError } from './errors';
 import { objectBody } from './wallet-input';
 import { programError } from './program-error';
 // #region ep8-send-guard
-export function guardTransaction(input: unknown): { bytes: Buffer; signature: string } {
+/**
+ * 默认只接受含 marginfi 指令的交易(钱包转发接口)。水龙头的兑换台复用同一套签名/格式检查，
+ * 但允许另一组程序——由调用方传入 accept，所以这里的检查不会被放宽给钱包转发接口。
+ */
+const hasMarginfi = (programs: string[]) => programs.includes(marginfiIdl.address);
+export function guardTransaction(input: unknown, accept: (programs: string[], signers: string[]) => boolean = hasMarginfi,
+  rejection = 'missing marginfi instruction'): { bytes: Buffer; signature: string } {
   const value = objectBody(input).transaction;
   if (typeof value !== 'string' || !value.length || value.length > 1644 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new ApiError(400, 'invalid transaction encoding/size');
   const bytes = Buffer.from(value, 'base64');
@@ -21,7 +27,9 @@ export function guardTransaction(input: unknown): { bytes: Buffer; signature: st
   if (tx.version !== 0 || tx.message.addressTableLookups.length) throw new ApiError(400, 'only v0 transactions without lookup tables are supported');
   const message = tx.message, count = message.header.numRequiredSignatures;
   if (!count || !message.isAccountSigner(0) || tx.signatures.length !== count) throw new ApiError(400, 'fee payer must be a signer');
-  if (!message.compiledInstructions.some(ix => message.staticAccountKeys[ix.programIdIndex]?.toBase58() === marginfiIdl.address)) throw new ApiError(400, 'missing marginfi instruction');
+  const programs = message.compiledInstructions.map(ix => message.staticAccountKeys[ix.programIdIndex]?.toBase58() ?? '');
+  const signers = message.staticAccountKeys.slice(0, count).map(k => k.toBase58());
+  if (!programs.length || !accept(programs, signers)) throw new ApiError(400, rejection);
   // 非零字节不是签名证据；验证所有 required signatures，尤其是 payer 的 Ed25519 签名。
   // 服务端绝不补签或承担费用；ALT 拒绝，避免未解析的地址绕过程序检查。
   const data = message.serialize();
