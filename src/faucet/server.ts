@@ -10,7 +10,7 @@ export async function faucetRoute(method: string, url: string, input: unknown, i
   try {
     if (method === 'OPTIONS') return { status: 204, headers: corsHeaders, body: '' };
     if (method === 'GET' && url === '/health') return { status: 200, headers: corsHeaders, body: '{"ok":true}' }; // 存活检查(check-ready 用)
-    if (swap && method === 'GET' && url === '/swap/rates') return { status: 200, headers: corsHeaders, body: JSON.stringify(swap.rates()) };
+    if (swap && method === 'GET' && url === '/swap/rates') return { status: 200, headers: corsHeaders, body: JSON.stringify(await swap.rates()) };
     if (swap && method === 'POST' && url === '/swap/quote') return { status: 200, headers: corsHeaders, body: JSON.stringify(await swap.quote(input)) };
     if (swap && method === 'POST' && url === '/swap/send') return { status: 200, headers: corsHeaders, body: JSON.stringify(await swap.submit(input)) };
     if (method !== 'POST' || url !== '/faucet') throw new ApiError(404, 'not found');

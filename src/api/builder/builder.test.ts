@@ -15,7 +15,9 @@ import { marginfiIdl } from '../../decoder/idl';
 import { decodeAccount } from '../../decoder/account';
 import { decodeTransaction } from '../../decoder/transaction';
 import { transactionFor } from '../../decoder/test-utils';
-import { accountData } from '../../store/accounts';
+import { accountData, snapshotAccounts } from '../../store/accounts';
+import { decodePriceUpdate } from '../../decoder/pyth';
+import { PYTH_RECEIVER } from '../../oracle/pyth';
 import { toJson } from '../../store/json';
 import type { Db } from '../../store/db';
 import type { Position } from '../state';
@@ -213,5 +215,39 @@ test('readUserFromChain：数据库没有账户时按 group+authority 在链上�
     }), readUserFromChain: true }, { action: 'deposit', wallet: a.actors.bob, bank: a.banks.tUSDC, amount: '1000000' });
     assert.equal(response.creates_account, false);
     assert.equal(response.marginfi_account, bobAddress);
+  } finally { await db.close(); }
+});
+
+/** 真实 pSOL 银行 + 验证账户 A(存 pSOL、借 tUSDC)放进库里;Pyth 价格账户由假 RPC 返回真实字节。 */
+async function seedPyth(db: Db) {
+  const fixture = (await import('../../../fixtures/pyth-accounts.json')).default;
+  const accounts = fixture.accounts as Record<string, { owner: string; lamports: number; data: string }>;
+  const by = Object.fromEntries(Object.entries(fixture.names).map(([address, name]) => [name, address]));
+  await snapshotAccounts(db, { getMultipleAccounts: async list => ({ context: { slot: fixture.slot },
+    value: list.map(x => ({ ...accounts[x], data: [accounts[x].data, 'base64'] as [string, 'base64'] })) }) }, [by.bank_pSOL, by.bank_tUSDC, by.account_A]);
+  const user = decodeAccount(Buffer.from(accounts[by.account_A].data, 'base64'), marginfiIdl); assert.ok('data' in user);
+  const pythInfo = { data: Buffer.from(accounts[by.pyth_SOL_USD].data, 'base64'), owner: PYTH_RECEIVER, lamports: 1, executable: false, rentEpoch: 0 };
+  const svc = (blockTime: number) => ({ ...services({ getAccountInfo: (async (key: PublicKey) => key.toBase58() === by.pyth_SOL_USD ? pythInfo
+    : Object.values(a.feeds).includes(key.toBase58()) ? feedInfo(blockTime) : null) as never,
+    getSlot: (async () => 1) as never, getBlockTime: (async () => blockTime) as never }), oracleOwners: new Set([mockOwner.toBase58(), PYTH_RECEIVER.toBase58()]) });
+  return { by, wallet: (user.data as unknown as { authority: string }).authority, published: Number(decodePriceUpdate(pythInfo.data).publish_time), svc };
+}
+test('Pyth 银行:remaining 里传换算出的价格账户(不是 oracle_keys 里的 feed id);价格够新不加任何写指令', async () => {
+  const db = await seedApi(); try {
+    const { by, wallet, published, svc } = await seedPyth(db);
+    const response = await buildTransaction(db, svc(published + 10), { action: 'borrow', wallet, bank: by.bank_tUSDC, amount: '1000000' });
+    const decoded = decodedInstructions(builtTx(response.transaction)); assert.ok('args' in decoded[0]);
+    assert.deepEqual(decoded[0].remaining, [by.bank_pSOL, by.pyth_SOL_USD, by.bank_tUSDC, a.feeds.tUSDC]);
+    assert.equal(response.summary, '借出 1 tUSDC');
+  } finally { await db.close(); }
+});
+test('Pyth 价格超过银行的 oracle_max_age(300 秒)时拒绝构建:我们写不了 Pyth 账户,只能如实让用户稍后再试', async () => {
+  const db = await seedApi(); try {
+    const { by, wallet, published, svc } = await seedPyth(db);
+    await buildTransaction(db, svc(published + 300), { action: 'borrow', wallet, bank: by.bank_tUSDC, amount: '1000000' }); // 恰好 300 秒仍可用
+    await assert.rejects(buildTransaction(db, svc(published + 301), { action: 'borrow', wallet, bank: by.bank_tUSDC, amount: '1000000' }),
+      (e: unknown) => e instanceof PriceStale && /Pyth/.test(e.view.message));
+    // 存款不看价格,Pyth 过期也照常构建。
+    await buildTransaction(db, svc(published + 10_000), { action: 'deposit', wallet, bank: by.bank_pSOL, amount: '1' });
   } finally { await db.close(); }
 });

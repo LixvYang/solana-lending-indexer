@@ -33,6 +33,6 @@ test('oracle snapshots validate all owners, keep raw/context slot, survive rebui
   await rebuildDecoded(db,marginfiIdl);
   assert.deepEqual((await db.query("SELECT * FROM account_states WHERE type='switchboardPullFeed' ORDER BY address")).rows,rows);
   assert.deepEqual([...oracleOwners(' one, two ,one ', '/nonexistent')],['one','two']);
-  assert.deepEqual([...oracleOwners(undefined,'/nonexistent')],['Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2']);
+  assert.deepEqual([...oracleOwners(undefined,'/nonexistent')],['Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2','rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ']);
  } finally {await db.close();}
 });

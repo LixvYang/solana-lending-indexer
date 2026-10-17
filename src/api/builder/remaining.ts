@@ -4,6 +4,7 @@ import type { Position } from '../state';
 import type { WalletAction } from '../types';
 import type { BuildBank } from './state';
 import { ApiError } from '../errors';
+import { oracleAccountOf } from '../../oracle/pyth';
 // #region ep8-remaining
 export function remainingBanks(balances: Position[], action: WalletAction, target: string, all: boolean): string[] {
   const slots = balances.map(b => b.active ? b.bank_pk : null);
@@ -21,7 +22,10 @@ export function observation(addresses: string[], banks: Record<string, BuildBank
   return addresses.flatMap(address => {
     const bank = banks[address];
     if (!bank || bank.group !== group) throw new ApiError(400, 'active bank outside pool');
-    return [address, bank.config.oracle_keys[0]].map(key => ({ pubkey: new PublicKey(key), isSigner: false, isWritable: false }));
+    // 每个银行跟一个价格账户。Pyth 银行存的是 feed id,要换算成账户地址(oracle/pyth.ts)。
+    const oracle = oracleAccountOf(bank.config);
+    if (!oracle) throw new ApiError(503, 'bank has no oracle');
+    return [address, oracle].map(key => ({ pubkey: new PublicKey(key), isSigner: false, isWritable: false }));
   });
 }
 // #endregion

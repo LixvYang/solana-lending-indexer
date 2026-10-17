@@ -4,6 +4,7 @@ import { rates, shareQuantity, floor, usd, displayNumber, fixedRational, utiliza
 import { label, unixIso, type BankData, type GroupData, type State } from './state';
 import type { BankView, InterestCurve, PoolView } from './types';
 import { marginfiIdl } from '../decoder/idl';
+import { oracleAccountOf } from '../oracle/pyth';
 const number = (v: Parameters<typeof fixedRational>[0]) => displayNumber(fixedRational(v));
 export function interestCurve(bank: BankData, group: GroupData): InterestCurve {
   const c = bank.config.interest_rate_config, cache = group.fee_state_cache;
@@ -14,19 +15,23 @@ export function interestCurve(bank: BankData, group: GroupData): InterestCurve {
     fee_rate: number(c.insurance_ir_fee) + number(c.protocol_ir_fee) + (enabled ? number(cache.program_fee_rate) : 0),
     fee_fixed_apr: number(c.insurance_fee_fixed_apr) + number(c.protocol_fixed_fee_apr) + (enabled ? number(cache.program_fee_fixed) : 0) };
 }
+/** 银行当前价格账户的快照(Pyth 银行先由 feed id 换算出账户地址)。 */
+export function bankFeed(bank: BankData, state: State) {
+  const account = oracleAccountOf(bank.config);
+  return account ? state.feeds[account] : undefined;
+}
 export function bankView(address: string, bank: BankData, state: State): BankView {
   const group = state.groups[bank.group];
   if (!group)
     throw new Error('missing group snapshot for interest fees');
-  const feedKey = bank.config.oracle_keys[0], oracle_feed = feedKey && feedKey !== '11111111111111111111111111111111' ? feedKey : null;
-  const feed = oracle_feed ? state.feeds[oracle_feed] : undefined;
-  // 未 crank（sample_size=0）不提供有效价格；解码器仍忠实返回其 0。不预测价格新鲜度。
-  const price = feed && feed.sample_size > 0 && Number.isFinite(feed.price.number) ? feed.price.number : null;
+  const oracle_feed = oracleAccountOf(bank.config), feed = bankFeed(bank, state);
+  // 未 crank(Switchboard sample_size=0)或 Pyth 非 Full 校验不提供有效价格;解码器仍忠实返回原值。不预测价格新鲜度。
+  const price = feed && feed.valid && Number.isFinite(feed.price.number) ? feed.price.number : null;
   const deposit = shareQuantity(bank.total_asset_shares, bank.asset_share_value), borrow = shareQuantity(bank.total_liability_shares, bank.liability_share_value);
   const u = deposit.numerator === 0n ? 0 : utilization(displayNumber({ numerator: borrow.numerator * deposit.denominator, denominator: borrow.denominator * deposit.numerator }));
   const curve = interestCurve(bank, group), c = bank.config, decimals = Number(bank.mint_decimals);
   return { address, mint: bank.mint, label: state.labels[bank.mint] ?? label(state.labels, address), decimals, price,
-    price_updated_at: price === null ? null : unixIso(feed!.last_update_timestamp), oracle_feed,
+    price_updated_at: price === null ? null : unixIso(feed!.last_update_timestamp), oracle_feed, oracle_source: feed?.source ?? null,
     total_deposits: String(floor(deposit)), total_borrows: String(floor(borrow)),
     total_deposits_usd: usd(deposit, decimals, price), total_borrows_usd: usd(borrow, decimals, price), utilization: u, ...rates(u, curve),
     weights: { asset_init: number(c.asset_weight_init), asset_maint: number(c.asset_weight_maint), liability_init: number(c.liability_weight_init), liability_maint: number(c.liability_weight_maint) }, curve,

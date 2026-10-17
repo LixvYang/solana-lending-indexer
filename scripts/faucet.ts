@@ -6,7 +6,9 @@ import { portNumber } from '../src/api/server';
 import { faucetGrants, dailyLimit } from '../src/faucet/config';
 import { createFaucet } from '../src/faucet/service';
 import { createFaucetServer } from '../src/faucet/server';
-import { createSwap } from '../src/faucet/swap';
+import { createSwap, type SwapAssetConfig } from '../src/faucet/swap';
+import { oraclePrices } from '../src/faucet/prices';
+import { FEED_IDS, pythPushAccount } from '../src/oracle/pyth';
 import { nativeAmount } from '../src/faucet/config';
 import { PublicKey } from '@solana/web3.js';
 import { readKeypair, cliRpc } from './admin-runtime';
@@ -18,16 +20,15 @@ async function main() {
   const payer = readKeypair(process.env.FAUCET_KEYPAIR), rpc = cliRpc(), db = pgDb();
   let grants, banks;
   try { banks = (await getPool(db)).banks; grants = faucetGrants(banks); } finally { await db.close(); }
-  // 兑换台:SOL / tSOL / tUSDC 任意两两互换,汇率由统一的 USD 单价推导(三者自洽)。
-  // 默认 SOL = $50、tSOL = $50、tUSDC = $1,与池子里 tSOL = $50 一致;这是 mock 汇率,不是市场价。
-  const price = (name: string, fallback: string) => nativeAmount(process.env[name] ?? fallback, 6); // USD × 1e6
-  const token = (label: 'tSOL' | 'tUSDC', usd: bigint) => {
-    const bank = banks.find(b => b.label === label)!;
-    return { symbol: label, decimals: bank.decimals, mint: new PublicKey(bank.mint), usdMicro: usd };
-  };
-  const swap = createSwap(payer, rpc, {
-    assets: [{ symbol: 'SOL', decimals: 9, usdMicro: price('SWAP_SOL_USD', '50') }, token('tSOL', price('SWAP_TSOL_USD', '50')), token('tUSDC', price('SWAP_TUSDC_USD', '1'))],
-    minUsdMicro: price('SWAP_MIN_USD', '0.05'), maxUsdMicro: price('SWAP_MAX_USD', '100') });
+  // 兑换台:SOL 与池子里所有测试币任意两两互换。汇率不写死:每次报价读各资产在借贷池里用的同一个价格账户,
+  // SOL 和 pSOL 读 Pyth SOL/USD(真实行情),tSOL / tUSDC 读我们的 mock 价格。所以兑换价和借贷池估值永远一致。
+  const usd = (name: string, fallback: string) => nativeAmount(process.env[name] ?? fallback, 6); // USD × 1e6
+  const tokens = banks.filter(b => ['tSOL', 'tUSDC', 'pSOL'].includes(b.label) && b.oracle_feed);
+  const assets: SwapAssetConfig[] = [{ symbol: 'SOL', decimals: 9 },
+    ...tokens.map(b => ({ symbol: b.label as SwapAssetConfig['symbol'], decimals: b.decimals, mint: new PublicKey(b.mint) }))];
+  const oracles = { SOL: pythPushAccount(FEED_IDS['SOL/USD']), ...Object.fromEntries(tokens.map(b => [b.label, new PublicKey(b.oracle_feed!)])) };
+  const swap = createSwap(payer, rpc, { assets, price: oraclePrices(rpc, oracles),
+    minUsdMicro: usd('SWAP_MIN_USD', '0.05'), maxUsdMicro: usd('SWAP_MAX_USD', '100') });
   const server = createFaucetServer(createFaucet(payer, rpc, grants, dailyLimit(process.env.FAUCET_DAILY_MAX)), swap);
   server.on('error', () => { console.error('faucet server failed'); process.exitCode = 1; });
   server.listen(portNumber(process.env.FAUCET_PORT ?? '8788'), '127.0.0.1', () => console.log('faucet listening'));

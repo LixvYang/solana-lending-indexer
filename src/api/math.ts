@@ -53,16 +53,20 @@ export function usd(value: HealthBalance['deposit'], decimals: number, price: nu
   return displayNumber({ numerator: q.numerator, denominator: q.denominator * 10n ** BigInt(decimals) }) * price;
 }
 // #region ep7-health
-export function health(balances: HealthBalance[], banks: Record<string, HealthBank>, prices: Record<string, number | null>, mode: 'init' | 'maint'): number | null {
+/** prices:纯数字表示没有置信区间;区间时资产用 low、负债用 high(见 oracle-price.ts riskPrice)。 */
+export function health(balances: HealthBalance[], banks: Record<string, HealthBank>, prices: Record<string, number | { low: number; high: number } | null>, mode: 'init' | 'maint'): number | null {
   let result = 0;
   for (const balance of balances) {
     if (!quantity(balance.deposit).numerator && !quantity(balance.borrow).numerator)
       continue;
     const bank = banks[balance.bank], price = prices[balance.bank];
-    if (!bank || price == null || !Number.isFinite(price))
+    if (!bank || price == null)
       return null;
-    result += usd(balance.deposit, bank.decimals, price)! * bank.weights[`asset_${mode}`]
-      - usd(balance.borrow, bank.decimals, price)! * bank.weights[`liability_${mode}`];
+    const low = typeof price === 'number' ? price : price.low, high = typeof price === 'number' ? price : price.high;
+    if (!Number.isFinite(low) || !Number.isFinite(high))
+      return null;
+    result += usd(balance.deposit, bank.decimals, low)! * bank.weights[`asset_${mode}`]
+      - usd(balance.borrow, bank.decimals, high)! * bank.weights[`liability_${mode}`];
   }
   return result;
 }

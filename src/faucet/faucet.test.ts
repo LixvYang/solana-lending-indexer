@@ -81,3 +81,11 @@ test('faucet handle reads bounded JSON and uses socket IP, ignoring forwarded IP
   await handleFaucet(req as unknown as InstanceType<typeof IncomingMessage>, res as unknown as InstanceType<typeof ServerResponse>, grant);
   assert.equal(status, 400);
 });
+test('pSOL(Pyth 定价)是后加的银行:池子里有才发,没有时只发 tUSDC/tSOL;tUSDC/tSOL 缺失仍然报错', () => {
+  const m = () => Keypair.generate().publicKey.toBase58();
+  const base = [{ label: 'tUSDC', mint: m(), decimals: 6 }, { label: 'tSOL', mint: m(), decimals: 9 }] as BankView[];
+  assert.deepEqual(faucetGrants(base, {}).map(g => g.label), ['tUSDC', 'tSOL']);
+  const withP = faucetGrants([...base, { label: 'pSOL', mint: m(), decimals: 9 } as BankView], { FAUCET_PSOL_AMOUNT: '2.5' });
+  assert.deepEqual(withP.map(g => [g.label, g.amount]), [['tUSDC', 1_000_000_000n], ['tSOL', 10_000_000_000n], ['pSOL', 2_500_000_000n]]);
+  assert.throws(() => faucetGrants([base[1]], {}), /unavailable/);
+});

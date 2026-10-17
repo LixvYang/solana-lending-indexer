@@ -1,4 +1,4 @@
-/** INPUT: 专用钱包、RPC、资产与 USD 单价配置。 OUTPUT: 兑换报价(兑换台已签名的交易)与受限转发。 POSITION: 兑换台,只提供资产、不垫付 SOL 手续费。 SYNC: folder.md。 */
+/** INPUT: 专用钱包、RPC、资产配置与报价时读取的 USD 单价。 OUTPUT: 兑换报价(兑换台已签名的交易)与受限转发。 POSITION: 兑换台,只提供资产、不垫付 SOL 手续费。 SYNC: folder.md。 */
 import { ComputeBudgetProgram, Keypair, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { ApiError } from '../api/errors';
@@ -7,7 +7,7 @@ import { tokenBalance } from '../api/wallet';
 import { objectBody, publicKey } from '../api/wallet-input';
 import type { WalletRpc, WaitClock } from '../api/wallet-rpc';
 import { realClock } from '../api/wallet-rpc';
-import type { SendResponse, SwapAsset, SwapQuoteResponse, SwapRatesView } from '../api/types';
+import type { OracleSource, SendResponse, SwapAsset, SwapQuoteResponse, SwapRatesView } from '../api/types';
 import { nativeAmount } from './config';
 
 export interface SwapAssetConfig {
@@ -15,22 +15,25 @@ export interface SwapAssetConfig {
   decimals: number;
   /** SOL 没有 mint(原生资产);代币有。 */
   mint?: PublicKey;
-  /** 单价,USD × 1e6(整数),例如 $50 = 50_000_000n。 */
-  usdMicro: bigint;
 }
-export interface SwapConfig { assets: SwapAssetConfig[]; minUsdMicro: bigint; maxUsdMicro: bigint; /** 兑换台至少保留的 SOL(付 ATA 租金等)。 */ keepLamports?: bigint }
+/** 带上当时单价的资产:USD × 1e6(整数),例如 $50 = 50_000_000n。 */
+export type PricedAsset = SwapAssetConfig & { usdMicro: bigint };
+/** 报价时的单价从哪来。兑换台不自己定价:每个资产读它在借贷池里用的同一个价格账户(prices.ts)。 */
+export type PriceReader = (asset: SwapAssetConfig) => Promise<{ usdMicro: bigint; source: OracleSource }>;
+export interface SwapConfig { assets: SwapAssetConfig[]; price: PriceReader; minUsdMicro: bigint; maxUsdMicro: bigint; /** 兑换台至少保留的 SOL(付 ATA 租金等)。 */ keepLamports?: bigint }
 
 // #region ep8-swap-math
 /**
  * 卖出 amountIn(原生单位)能换到多少:整数运算、向下取整,永远不会多给。
  *   换出 = 卖出 × 单价(卖出) × 10^小数位(换出) / (单价(换出) × 10^小数位(卖出))
  * 例:1 SOL($50) → tUSDC($1):1e9 × 50e6 × 1e6 / (1e6 × 1e9) = 50e6,即 50 tUSDC。
- * 因为所有汇率都来自同一张 USD 单价表,SOL→tSOL→tUSDC→SOL 绕一圈只会因取整而略少,不会凭空变多(没有套利环)。
+ * 同一次报价里所有汇率都来自同一张 USD 单价表,SOL→tSOL→tUSDC→SOL 绕一圈只会因取整而略少,不会凭空变多(没有套利环)。
+ * 单价跟着预言机走(Pyth 是真实行情),所以不同时刻的报价会不同。
  */
-export const swapOut = (amountIn: bigint, from: SwapAssetConfig, to: SwapAssetConfig): bigint =>
+export const swapOut = (amountIn: bigint, from: PricedAsset, to: PricedAsset): bigint =>
   amountIn * from.usdMicro * 10n ** BigInt(to.decimals) / (to.usdMicro * 10n ** BigInt(from.decimals));
 /** 这笔卖出的价值(USD × 1e6),用来做上下限。 */
-export const notionalMicro = (amountIn: bigint, from: SwapAssetConfig): bigint => amountIn * from.usdMicro / 10n ** BigInt(from.decimals);
+export const notionalMicro = (amountIn: bigint, from: PricedAsset): bigint => amountIn * from.usdMicro / 10n ** BigInt(from.decimals);
 // #endregion
 
 const ui = (native: bigint, decimals: number) => {
@@ -41,6 +44,11 @@ const ui = (native: bigint, decimals: number) => {
 export function createSwap(desk: Keypair, rpc: WalletRpc, config: SwapConfig, clock: WaitClock = realClock) {
   const allowed = new Set([ComputeBudgetProgram.programId, SystemProgram.programId, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID].map(p => p.toBase58()));
   const keep = config.keepLamports ?? 50_000_000n; // 兑换台至少留 0.05 SOL
+  const priced = async (a: SwapAssetConfig): Promise<PricedAsset> => {
+    const { usdMicro } = await config.price(a);
+    if (usdMicro <= 0n) throw new ApiError(503, `${a.symbol} 价格暂时不可用，请稍后再试。`);
+    return { ...a, usdMicro };
+  };
   const asset = (symbol: unknown) => {
     const found = config.assets.find(a => a.symbol === symbol);
     if (!found) throw new ApiError(400, 'unknown asset');
@@ -50,14 +58,16 @@ export function createSwap(desk: Keypair, rpc: WalletRpc, config: SwapConfig, cl
   const deskHolds = async (a: SwapAssetConfig) => a.mint ? tokenBalance(rpc, a.mint, desk.publicKey) : BigInt(await rpc.getBalance(desk.publicKey, 'confirmed')) - keep;
 
   return {
-    rates(): SwapRatesView {
-      return { assets: config.assets.map(a => ({ symbol: a.symbol, decimals: a.decimals, usd: ui(a.usdMicro, 6) })),
+    async rates(): Promise<SwapRatesView> {
+      const assets = await Promise.all(config.assets.map(async a => ({ a, p: await config.price(a) })));
+      return { assets: assets.map(({ a, p }) => ({ symbol: a.symbol, decimals: a.decimals, usd: ui(p.usdMicro, 6), source: p.source })),
         min_usd: ui(config.minUsdMicro, 6), max_usd: ui(config.maxUsdMicro, 6) };
     },
 
     async quote(input: unknown): Promise<SwapQuoteResponse> {
-      const body = objectBody(input), wallet = publicKey(body.wallet), from = asset(body.from), to = asset(body.to);
-      if (from.symbol === to.symbol) throw new ApiError(400, 'cannot swap an asset for itself');
+      const body = objectBody(input), wallet = publicKey(body.wallet), fromAsset = asset(body.from), toAsset = asset(body.to);
+      if (fromAsset.symbol === toAsset.symbol) throw new ApiError(400, 'cannot swap an asset for itself');
+      const [from, to] = await Promise.all([priced(fromAsset), priced(toAsset)]);
       let amountIn: bigint;
       try { amountIn = nativeAmount(String(body.amount), from.decimals); } catch { throw new ApiError(400, 'invalid amount'); }
       const value = notionalMicro(amountIn, from);

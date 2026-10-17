@@ -3,6 +3,8 @@ import type { Db, Row } from '../store/db';
 import { fromJson } from '../store/json';
 import { marginfiIdl } from '../decoder/idl';
 import type { Fixed } from '../decoder/account';
+import { feedFromRow, type FeedData } from './oracle-price';
+export type { FeedData } from './oracle-price';
 export interface BankData {
   mint: string;
   mint_decimals: bigint;
@@ -17,6 +19,7 @@ export interface BankData {
     asset_weight_maint: Fixed;
     liability_weight_init: Fixed;
     liability_weight_maint: Fixed;
+    oracle_setup: Record<string, unknown>;
     oracle_keys: string[];
     interest_rate_config: Record<string, Fixed>;
   };
@@ -40,14 +43,6 @@ export interface UserData {
   lending_account: {
     balances: Position[];
   };
-}
-export interface FeedData {
-  price: {
-    decimal: string;
-    number: number;
-  };
-  last_update_timestamp: string;
-  sample_size: number;
 }
 export interface State {
   rows: Row[];
@@ -77,8 +72,9 @@ export async function readState(db: Db): Promise<State> {
       state.groups[address] = fromJson(data, type, marginfiIdl) as GroupData;
     if (type === 'MarginfiAccount')
       state.users[address] = fromJson(data, type, marginfiIdl) as UserData;
-    if (type === 'switchboardPullFeed')
-      state.feeds[address] = data as unknown as FeedData;
+    const feed = feedFromRow(type, String(row.owner), data);
+    if (feed)
+      state.feeds[address] = feed;
   }
   const only = poolGroup();
   if (only) {

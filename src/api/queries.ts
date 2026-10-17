@@ -2,7 +2,8 @@
 import type { Db } from '../store/db';
 import type { AccountView, RateCurveView, PoolView } from './types';
 import { readState, label } from './state';
-import { poolView } from './bank';
+import { poolView, bankFeed } from './bank';
+import { riskPrice } from './oracle-price';
 import { health, quantity, shareQuantity, floor, usd, rates, type HealthBalance } from './math';
 export function getPool(db: Db): Promise<PoolView> { return readState(db).then(poolView); }
 export async function getRateCurve(db: Db, address: string): Promise<RateCurveView | null> {
@@ -14,7 +15,12 @@ export async function getRateCurve(db: Db, address: string): Promise<RateCurveVi
 }
 export async function getAccounts(db: Db): Promise<AccountView[]> {
   const state = await readState(db), views = poolView(state).banks;
-  const banks = Object.fromEntries(views.map(b => [b.address, b])), prices = Object.fromEntries(views.map(b => [b.address, b.price]));
+  const banks = Object.fromEntries(views.map(b => [b.address, b]));
+  // 健康度按程序的方式取价:开仓/维持各用一套带置信区间的价格。没有有效价格的银行为 null。
+  const prices = (mode: 'init' | 'maint') => Object.fromEntries(views.map(b => {
+    const feed = bankFeed(state.banks[b.address], state);
+    return [b.address, b.price !== null && feed ? riskPrice(feed, mode) : null];
+  }));
   return Object.entries(state.users).map(([address, user]) => {
     const amounts: HealthBalance[] = user.lending_account.balances.filter(p => p.active).map(p => {
       const bank = state.banks[p.bank_pk];
@@ -27,7 +33,7 @@ export async function getAccounts(db: Db): Promise<AccountView[]> {
       return { bank: a.bank, label: b.label, deposit: String(floor(quantity(a.deposit))), borrow: String(floor(quantity(a.borrow))),
         deposit_usd: usd(a.deposit, b.decimals, b.price), borrow_usd: usd(a.borrow, b.decimals, b.price) };
     });
-    const init = health(amounts, banks, prices, 'init'), maint = health(amounts, banks, prices, 'maint');
+    const init = health(amounts, banks, prices('init'), 'init'), maint = health(amounts, banks, prices('maint'), 'maint');
     const sum = (field: 'deposit_usd' | 'borrow_usd') => balances.some(b => b[field] === null) ? null : balances.reduce((n, b) => n + b[field]!, 0);
     // 用精确债务而非向下取整显示判断。有债务但缺价格时健康度为 null，状态是 unknown：
     // 既不能说健康，也不能说可清算(没有价格就没有清算资格的证据)。

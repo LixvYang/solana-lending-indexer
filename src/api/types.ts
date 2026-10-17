@@ -25,6 +25,14 @@ export interface InterestCurve {
   fee_fixed_apr: number;
 }
 
+export type OracleSource = 'pyth' | 'mock' | 'switchboard';
+
+/** GET /api/config:前端启动时需要的公开配置。 */
+export interface ClientConfig {
+  /** 水龙头/兑换台地址;未配置时为 null。 */
+  faucet_url: string | null;
+}
+
 export interface BankView {
   address: string;
   mint: string;
@@ -35,6 +43,8 @@ export interface BankView {
   price: number | null;
   price_updated_at: string | null;
   oracle_feed: string | null;
+  /** 价格来源:pyth = Pyth 真实行情;mock = Switchboard 布局、由我们写入的价格(D-009);switchboard = 真实 Switchboard。 */
+  oracle_source: OracleSource | null;
   total_deposits: string;
   total_borrows: string;
   total_deposits_usd: number | null;
@@ -265,13 +275,14 @@ export interface FaucetResponse {
  * 手续费和账户租金由用户付,兑换台只提供资产。汇率由统一的 USD 单价推导(三者之间自洽,不会有套利环),
  * 是固定的 mock,不是市场价。
  */
-export type SwapAsset = 'SOL' | 'tSOL' | 'tUSDC';
+export type SwapAsset = 'SOL' | 'tSOL' | 'tUSDC' | 'pSOL';
 
 export interface SwapAssetView {
   symbol: SwapAsset;
   decimals: number;
-  /** 单价(USD),十进制字符串。 */
+  /** 单价(USD),十进制字符串;报价当时从价格账户读取。 */
   usd: string;
+  source: OracleSource;
 }
 
 export interface SwapRatesView {

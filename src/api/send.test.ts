@@ -42,6 +42,9 @@ test('send failure translates chain custom error; transient failures continue; 6
   const timeout = await sendTransaction(fixture.input, fakeRpc({ getSignatureStatuses: async () => { throw Error('api-key=secret'); }, sendRawTransaction: async () => { replays++; return 'ignored'; } }), clock);
   assert.equal(timeout.status, 'timeout'); assert.equal(timeout.error, null); assert.equal(replays, 30); assert.equal(clock.now(), 1700000060000);
   assert.deepEqual(programError('api-key=secret'), { code: null, name: 'Unknown', message: '交易未能执行，请重新构建并重试。' });
+  // 代币转账余额不足(SPL Token Custom(1)):真实联调里"还清全部"时钱包只有借到的数、不够付利息就会遇到。
+  assert.equal(programError({ InstructionError: [3, { Custom: 1 }] }).name, 'InsufficientFunds');
+  assert.match(programError({ InstructionError: [3, { Custom: 1 }] }).message, /利息/);
   assert.deepEqual(publicLogs(['Program log: secret', `Program ${marginfiIdl.address} success`]), ['[program output omitted]', `Program ${marginfiIdl.address} success`]);
 });
 test('confirmation deadline also bounds an RPC that never resolves', async () => {

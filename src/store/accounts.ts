@@ -6,15 +6,23 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { decodePullFeed, DISCRIMINATOR } from '../decoder/switchboard';
+import { decodePriceUpdate, DISCRIMINATOR as PYTH_DISCRIMINATOR } from '../decoder/pyth';
+import { PYTH_RECEIVER } from '../oracle/pyth';
 import { marginfiIdl, type Idl } from '../decoder/idl';
 import { decodeAccount } from '../decoder/account';
 import type { AccountResponse } from '../ingest/rpc';
 import type { Db } from './db';
 import { toJson } from './json';
 export interface AccountRpc { getMultipleAccounts(addresses: string[]): Promise<AccountResponse> }
-export function accountData(raw_data: string, idl: Idl) {
-  const bytes = Buffer.from(raw_data, 'base64');
+/** 价格账户按 discriminator 分辨:Switchboard PullFeed(含我们布局一致的 mock)或 Pyth PriceUpdateV2。 */
+function oracleData(bytes: Buffer, raw_data: string) {
   if (bytes.subarray(0, 8).equals(DISCRIMINATOR)) return { type: 'switchboardPullFeed', data: { ...decodePullFeed(bytes), raw_data } };
+  if (bytes.subarray(0, 8).equals(PYTH_DISCRIMINATOR)) return { type: 'pythPriceUpdate', data: { ...decodePriceUpdate(bytes), raw_data } };
+  return null;
+}
+export function accountData(raw_data: string, idl: Idl) {
+  const bytes = Buffer.from(raw_data, 'base64'), oracle = oracleData(bytes, raw_data);
+  if (oracle) return oracle;
   const decoded = decodeAccount(bytes, idl);
   return { type: decoded.name, data: { ...('data' in decoded ? decoded.data : decoded), raw_data } };
 }
@@ -51,7 +59,7 @@ export async function snapshotAccounts(db: Db, rpc: AccountRpc, addresses: strin
 
 export function oracleOwners(config = process.env.ORACLE_OWNERS, idsPath = resolve('program/out/program-ids.json')): Set<string> {
   if (config !== undefined) return new Set(config.split(',').map(s => s.trim()).filter(Boolean));
-  const owners = new Set(['Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2']);
+  const owners = new Set(['Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2', PYTH_RECEIVER.toBase58()]);
   try {
     const ids = JSON.parse(readFileSync(idsPath, 'utf8'));
     if (typeof ids.mocks !== 'string' || !ids.mocks) throw new Error('missing mocks program id');
@@ -71,13 +79,14 @@ export async function snapshotOracles(db: Db, rpc: AccountRpc, addresses: string
       if (!account) { console.error(`missing oracle ${address}; snapshot skipped`); return []; }
       if (!owners.has(account.owner)) throw new Error(`oracle owner mismatch ${address}: ${account.owner}`);
       if (account.data[1] !== 'base64') throw new Error(`unexpected oracle encoding ${address}`);
-      const raw_data = account.data[0], data = { ...decodePullFeed(Buffer.from(raw_data, 'base64')), raw_data };
-      return [{ address, account, data }];
+      const raw_data = account.data[0], oracle = oracleData(Buffer.from(raw_data, 'base64'), raw_data);
+      if (!oracle) throw new Error(`unknown oracle layout ${address}`);
+      return [{ address, account, ...oracle }];
     });
     await db.transaction(async tx => {
       for (const state of states) await tx.query(`INSERT INTO account_states(address,slot,type,owner,lamports,data)
-        VALUES ($1,$2,'switchboardPullFeed',$3,$4,$5::jsonb) ON CONFLICT(address,slot) DO NOTHING`,
-      [state.address, response.context.slot, state.account.owner, state.account.lamports, toJson(state.data)]);
+        VALUES ($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(address,slot) DO NOTHING`,
+      [state.address, response.context.slot, state.type, state.account.owner, state.account.lamports, toJson(state.data)]);
     });
     count += states.length;
   }

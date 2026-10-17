@@ -3,6 +3,8 @@ import { Keypair, PublicKey, ComputeBudgetProgram, TransactionMessage, Versioned
 import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import type { Db } from '../../store/db';
 import { decodePullFeed } from '../../decoder/switchboard';
+import { decodePriceUpdate } from '../../decoder/pyth';
+import { isPythPush, oracleAccountOf } from '../../oracle/pyth';
 import { mockFeedSigner, refreshTimestampIx } from '../../oracle/mock-write';
 import { oracleOwners } from '../../store/accounts';
 import { getPool } from '../queries';
@@ -26,8 +28,8 @@ async function clusterTime(services: WalletServices): Promise<bigint> {
 
 export class PriceStale extends ApiError {
   // 只在价格确实无法刷新时出现(比如价格账户不是我们的 mock,或从未有过价格)。不向用户暴露"维护进程"这类内部细节。
-  readonly view = { code: null, name: 'PriceStale', message: '价格暂时不可用，请稍后重试。' };
-  constructor() { super(409, '价格暂时不可用，请稍后重试。'); }
+  readonly view;
+  constructor(message = '价格暂时不可用，请稍后重试。') { super(409, message); this.view = { code: null, name: 'PriceStale', message }; }
 }
 export async function buildTransaction(db: Db, services: WalletServices, input: unknown): Promise<BuildResponse> {
   const request = buildInput(input), pool = await getPool(db), state = await readState(db);
@@ -50,9 +52,17 @@ export async function buildTransaction(db: Db, services: WalletServices, input: 
   if (request.action === 'borrow' || request.action === 'withdraw') {
     now = await clusterTime(services);
     for (const address of new Set([...remaining, request.bank])) {
-      const feedKey = new PublicKey(banks[address].config.oracle_keys[0]);
+      const config = banks[address].config, oracle = oracleAccountOf(config);
+      if (!oracle) throw new PriceStale();
+      const feedKey = new PublicKey(oracle);
       const feed = await services.rpc.getAccountInfo(feedKey, 'confirmed'); // 读链上当前值，库里的快照不能作为新鲜度证据
       if (!feed || !(services.oracleOwners ?? oracleOwners()).has(feed.owner.toBase58())) throw new PriceStale();
+      if (isPythPush(config.oracle_setup)) {
+        // Pyth 的价格由 Pyth 自己推送,我们写不了;只能确认它还在银行允许的年龄内,否则如实告诉用户等一下。
+        const pyth = decodePriceUpdate(feed.data);
+        if (pyth.verification !== 'Full' || now - pyth.publish_time > BigInt(config.oracle_max_age)) throw new PriceStale('Pyth 价格暂未更新，请过一两分钟再试。');
+        continue;
+      }
       const price = decodePullFeed(feed.data);
       if (!price.sample_size) throw new PriceStale(); // 从未有过价格:没有可保鲜的值
       const age = now - price.last_update_timestamp;
