@@ -8,6 +8,8 @@
 
 ## 每集开拍前
 
+EP1 和 EP8 的后续增补部分用 `main`(最终成果),其余各集用自己的 tag:
+
 ```bash
 git checkout epN-end          # 回到这一集的代码检查点(tag),见仓库根 README
 docker compose up -d

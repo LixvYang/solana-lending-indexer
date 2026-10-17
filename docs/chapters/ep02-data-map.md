@@ -64,6 +64,8 @@ Program 8fQDyb… success
 
 本项目只信 **finalized**:代价是慢几十秒,换来不用处理链重组。这是写在 README "局限"里的取舍。
 
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):后来为了让钱包操作后页面几秒内就更新,实时跟随(`ingest --follow`)改成先按 **confirmed** 入库,再由"终局清扫"确认或删除被丢弃分叉上的交易;回填和扫区间仍只认 finalized。见 EP8「页面多快能反映出你刚发的交易」与 D-017。
+
 ## 取数据的两条路
 
 - **按签名**:`getSignaturesForAddress(程序地址)` 列出所有碰过这个程序的交易,再逐个 `getTransaction`。只拉相关交易,**适合回填历史**。

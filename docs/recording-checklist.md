@@ -28,8 +28,8 @@ pnpm exec tsx scripts/faucet.ts               # 终端 4:水龙头 + 兑换台(�
 | EP4–EP5 | 只需离线 fixtures,`pnpm test` 能跑即可 | 突变验证要现场改代码,提前备好 `git stash` |
 | EP6 | Postgres 在运行 | `verify-db` 前后两次 md5 要相同 |
 | EP7 | API + 前端 | 价格维护进程不是必须(只读) |
-| EP8 | **水龙头 + `ingest --follow`**;API 要设 `POOL_GROUP`(价格不再需要维护进程) | 见 `ep08-script.md` |
-| EP1 | 全部 | **最后拍** |
+| EP8 | **水龙头 + `ingest --follow`**;API 要设 `POOL_GROUP`(价格不再需要维护进程);后续增补部分用 `main`,确认 Pyth 价格在更新(`/api/pool` 里 pSOL 的 `price_updated_at` 在几分钟内) | 见 `ep08-script.md` |
+| EP1 | 全部,用 `main`;钱包里预先有 pSOL/tUSDC(展示图标) | **最后拍** |
 
 ## 每集都要说的诚实声明
 

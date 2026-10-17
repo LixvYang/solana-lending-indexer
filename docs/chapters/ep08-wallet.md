@@ -354,6 +354,8 @@ pnpm exec tsx scripts/ingest.ts --follow       # 终端 3:实时跟随链上新�
 pnpm exec tsx scripts/e2e-wallet.ts
 ```
 
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):Pyth 定价的 pSOL 银行有三个脚本:`add-pyth-bank.ts` 建币、加银行、绑定 Pyth(幂等);`verify-pyth-bank.ts` 直接调程序验证两个方向的借款;`e2e-pyth.ts` 经 HTTP 走完 SOL 换 pSOL → 存 → 借 → 还清 → 取出。代币的链上元数据(钱包里的名称与图标)用 `token-metadata.ts` 写入(D-021)。
+
 在真实 devnet 上的一次运行:
 
 | 步骤 | 结果 | 计算单元 |
@@ -385,6 +387,7 @@ pnpm exec tsx scripts/e2e-wallet.ts
 - **仅 devnet、仅测试币。** 水龙头的限流在内存里,没有真正的防刷;没有信任代理时只看 socket IP,不信 `X-Forwarded-For`。
 - **只支持普通 SPL Token。** 不支持 Token-2022 和 staked asset 这类特殊的 remaining accounts。
 - **维护进程和改价工具并发时可能互相覆盖。** 它们都会写价格账户,可能读到旧价格后覆盖新值。如果不运行可选的维护进程,就没有这个问题。
+- **Pyth 价格我们写不了。** pSOL 的借款/取款依赖 Pyth devnet 持续更新(约 1–2 分钟一次);断更超过银行允许的 300 秒时会被拒绝,只能等(D-019)。
 - **转发超时不等于交易没上链。** 原签名可能稍后成功,不要直接重复构建。
 - **tSOL/tUSDC 的价格是 mock**(Switchboard 已关停,D-018);pSOL 是 Pyth 真实行情。
 

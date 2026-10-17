@@ -134,6 +134,8 @@ export function resultRegion(price: number | bigint, timestamp: number, slot: nu
 
 > 视频里请明确说:这是"布局一致的 mock",不是真实的 Switchboard 价格。真实 Switchboard 那条路只验证到创建 feed。
 
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):上面的"oracle 离线"是 2026-10-11 的实测。之后核实:Switchboard 已于 2026-09-19 宣布整体关停、09-25 停止支持,devnet 的 oracle 不会恢复(D-018)。所以剧本继续用这个 mock——它本来也是演示清算所必需的(真实行情没法按需打低)。另外新增了一个价格来自 **Pyth** devnet 真实行情的资产 pSOL,用来演示真实预言机(EP8,D-019)。
+
 ## 跑完之后
 
 一次完整运行:**32 笔交易全部 finalized**,覆盖存款、借款、还款、取款、清算、计息。tSOL 从 $100 降到 $50 后,carol 清算 bob 成功,最后 bob 还清了债务。这次运行的原始数据存在 `fixtures/m1-run.json`,是后面所有解码器的金标准。

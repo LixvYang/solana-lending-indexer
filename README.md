@@ -1,6 +1,6 @@
 # solana-lending-indexer
 
-用 marginfi(mrgn-0.1.0)当样本,演示 **Solana 链上数据如何一步步变成数据库里的行,再变成网页上的数字**。配套 B 站合集视频(7 集)。
+用 marginfi(mrgn-0.1.0)当样本,演示 **Solana 链上数据如何一步步变成数据库里的行,再变成网页上的数字**。配套 B 站合集视频(7 集 + 可选的第 8 集)。
 
 > 状态:**主线 M0–M5 已完成并在真实 devnet 上验收**(见 [docs/progress.md](docs/progress.md))。视频与分镜([video/](video/))待录制。
 
@@ -12,7 +12,8 @@
 - 一条**手写的解析流水线**:指令(Borsh)、事件(日志)、账户状态(`zero_copy` 布局 + I80F48 定点数),全部带测试,并用 Anchor 官方 coder 交叉校验。
 - **幂等、可回填、可重放**的 Postgres 存储:清库重跑,解码表的 md5 完全一致。
 - 一个**API 和前端**,其中的"X 光"能并排看到一笔交易的原始字节、解码结果、数据库行。
-- **钱包交互**(可选的第 8 集):连接 devnet 钱包,对借贷池存款、取款、借款、还款;有水龙头、SOL/tSOL/tUSDC 任意互换的兑换台,以及端到端验收脚本。价格由交易自动保鲜,不依赖后台进程。
+- **钱包交互**(可选的第 8 集):连接 devnet 钱包,对借贷池存款、取款、借款、还款;有水龙头、SOL 与测试币任意互换的兑换台(按预言机价格成交),以及端到端验收脚本。价格由交易自动保鲜,不依赖后台进程。
+- **一个真实预言机的资产**(后续增补):pSOL 的价格来自 Pyth devnet 实时行情;代币有图标,并写进了链上元数据,钱包里也能显示。
 
 ## ⚠️ 先说清楚:价格从哪来
 
@@ -25,7 +26,7 @@
 
 | 集 | 主题 | 文档 | 分镜 | 代码检查点 |
 |---|---|---|---|---|
-| EP1 | 成品演示 | [ep01](docs/chapters/ep01-demo.md) | [script](video/ep01-script.md) | `ep7-end`(展示最终成果) |
+| EP1 | 成品演示 | [ep01](docs/chapters/ep01-demo.md) | [script](video/ep01-script.md) | `main`(展示最终成果,最后拍) |
 | EP2 | Solana 数据地图 | [ep02](docs/chapters/ep02-data-map.md)、[速查图](docs/cheatsheet.md) | [script](video/ep02-script.md) | —(概念,无代码) |
 | EP3 | 看懂借贷协议,造出链上数据 | [ep03](docs/chapters/ep03-protocol-and-scenario.md) | [script](video/ep03-script.md) | `ep3-end` |
 | EP4 | 解析指令 | [ep04](docs/chapters/ep04-instructions.md) | [script](video/ep04-script.md) | `ep4-end` |

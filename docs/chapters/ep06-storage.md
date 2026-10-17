@@ -198,7 +198,7 @@ pnpm exec tsx scripts/reindex.ts && pnpm exec tsx scripts/verify-db.ts   # md5 �
 
 - **JSONB 不保留键顺序**(按键的长度再按字节序重排)。解码出的账户映射存成 JSONB 后,账户顺序变了,而账户在指令里的**位置是有语义的**。要保序就存数组,或者读出来再按 IDL 重排(EP7 的 API 就这样做)。
 - **`BIGINT` 的类型差异。** PGlite 返回 JS 的 `bigint`,`pg` 默认返回字符串。适配层统一成字符串。
-- **不处理链重组。** 只入库 finalized。
+- **不处理链重组。** 只入库 finalized。(后续增补:实时跟随改为 confirmed 乐观入库 + 终局清扫,回填仍只认 finalized,见 EP8 与 D-017。)
 - **追赶历史别用 tail。** devnet 一天约 20 万个 slot,逐个请求太慢。
 
 ## 下一集
