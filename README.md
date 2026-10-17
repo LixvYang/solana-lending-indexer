@@ -36,6 +36,8 @@
 
 从 EP3 起每一集一个 git tag,`git checkout ep4-end` 就是第 4 集结束时的代码。历史是线性的:各集的提交按顺序排列,没有重写。
 
+`ep8-end` 之后的改进(兑换台、价格自动保鲜与 confirmed 入库、Pyth 定价的 pSOL 银行、界面改版、代币链上元数据)只在 `main` 上,章节里对应位置标为 **「后续增补」**,并写明对应的决策编号;想看这些就用 `main`。
+
 ## 快速开始
 
 需要 Node 24、pnpm、Docker、Solana CLI 2.1.20。
@@ -82,6 +84,10 @@ FAUCET_KEYPAIR=… pnpm exec tsx scripts/add-pyth-bank.ts   # 可选:加 Pyth �
 更多命令见 [AGENTS.md](AGENTS.md)。
 
 钱包后端 M7a 已实现，当前仅离线验收：构建/转发/钱包信息、水龙头与价格维护的配置见 [EP8 后端说明](docs/chapters/ep08-wallet-backend.md)。`src/api/types.ts` 为前后端固定契约。API 不读取管理员密钥；`RPC_URL` 未设置时原有只读路由继续工作，钱包路由返回 503。
+
+## 许可证
+
+[MIT](LICENSE)。入库的 marginfi IDL 来自上游(Apache-2.0),见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 局限
 

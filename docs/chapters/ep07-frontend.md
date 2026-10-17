@@ -73,6 +73,8 @@ export function health(balances: HealthBalance[], banks: Record<string, HealthBa
 ```
 <!-- /snippet -->
 
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):函数里的 `low` / `high`(价格区间)是接入 Pyth 后加的,见下面「价格区间与 Pyth 账户」;`ep7-end` 里只有单一价格。对 mock 价格两者结果相同。
+
 怎么知道算对了?清算事件里,**程序自己报告了被清算账户的健康度**:`liquidatee_pre_health = −750.00178`。我们用事件里的余额、当时的价格($50 和 $1)和 bank 的维持权重重新算一遍:
 
 ```
@@ -82,7 +84,9 @@ export function health(balances: HealthBalance[], banks: Record<string, HealthBa
 清算之后的 `post_health = −701.2518` 同样对得上。**与程序自己的结果在 1e-6 内相等。**
 
 
-### 价格区间与 Pyth 账户
+### 价格区间与 Pyth 账户(后续增补)
+
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):D-019。
 
 上面的公式用的不是"一个价格"。程序算健康度时,资产按价格区间的**下沿**、负债按**上沿**,开仓用时间加权价、维持用实时价:
 
@@ -276,6 +280,15 @@ Vite + React + TypeScript,图表**手写 SVG**,不引图表库。
 - **X 光抽屉**:三栏并排。左栏的字节按"discriminator / 各参数"着色,**鼠标移到某个字节段上,中栏对应的字段同步高亮**。
 
 配色用的是经过验证的调色板:图里的蓝和橙在浅色、深色两种背景下,对比度和色盲区分度都用脚本检查过,而不是凭眼睛判断。
+
+### 界面改版(后续增补)
+
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):D-020、D-021。
+
+- 内容分到五个 tab(借贷池 / 我来操作 / 兑换 / 账户 / 链上活动),当前 tab 记在 URL hash 里。
+- 借贷池改为市场列表(参照 Aave / marginfi / Kamino):每个资产一行,存借 APR 并排、利用率条、最高抵押率,行尾直接"存入 / 借出"。
+- 兑换独立成页(参照 Jupiter / Uniswap):带图标与余额的代币选择器、翻转、汇率与费用明细。
+- 代币有图标与说明(`web/src/tokens.tsx`),并写进了链上 Metaplex 元数据,钱包里也能显示(`scripts/token-metadata.ts`)。
 
 ### 对照另一个真实前端
 

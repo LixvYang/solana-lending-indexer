@@ -4,7 +4,7 @@
 
 ## D-001 许可证(已核实,2026-10-11)
 
-上游 `marginfi-v2` 为 Apache-2.0(本机克隆 `../marginfi-v2/LICENSE`)。可以 fork 与再分发,需保留许可与版权声明。本项目自身的许可证尚未选定。
+上游 `marginfi-v2` 为 Apache-2.0(本机克隆 `../marginfi-v2/LICENSE`)。可以 fork 与再分发,需保留许可与版权声明。本项目自身用 **MIT**(用户决定,2026-10-17,`LICENSE`);入库的 marginfi IDL 按 Apache-2.0 使用,声明见 `THIRD_PARTY_NOTICES.md`,许可全文在 `third_party/marginfi-v2/LICENSE`。
 
 ## D-002 mrgn-0.1.0 的构建工具链(已验证,2026-10-11)
 

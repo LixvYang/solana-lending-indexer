@@ -135,7 +135,9 @@ export function guardTransaction(input: unknown, accept: (programs: string[], si
 ```
 <!-- /snippet -->
 
-## 获取测试币的第二种方式:SOL 与测试币任意兑换
+## 获取测试币的第二种方式:SOL 与测试币任意兑换(后续增补)
+
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):D-016 引入兑换台,D-017 改为任意两两互换,D-019 起汇率按预言机价格。
 
 水龙头免费但有限流。想要更多,或者想换成别的币,可以**兑换**——SOL、tSOL、tUSDC、pSOL 任意两两互换。测试币是我们自己发行的,没有真实的 AMM 池子,所以做成一个**原子兑换台**:一笔交易里同时有两件事——你把 A 转给兑换台、兑换台把 B 转给你。汇率不写死,按借贷池用的同一批价格账户来定(见下)。
 
@@ -188,7 +190,9 @@ export const notionalMicro = (amountIn: bigint, from: PricedAsset): bigint => am
 
 (2026-10-14 固定汇率版本)真实 devnet 上用界面点过三个方向:tUSDC → SOL(25 tUSDC 换 0.5 SOL)、SOL → tSOL(0.2 → 0.2)、tSOL → tUSDC(0.2 tSOL 换 10 tUSDC),预估数量与实际到账一致。
 
-## 真实价格:Pyth 定价的 pSOL 银行
+## 真实价格:Pyth 定价的 pSOL 银行(后续增补)
+
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):D-018、D-019。
 
 Switchboard 已于 2026-09 关停(D-018),devnet 上还在持续更新的真实价格只剩 Pyth 赞助的价格账户。mrgn-0.1.0 本来就支持 `PythPushOracle`,不用升级程序。我们新发了一个测试币 **pSOL**,在同一个池子里加一个银行,价格绑定 Pyth SOL/USD(`scripts/add-pyth-bank.ts`):
 
@@ -213,7 +217,9 @@ if (!(current.config.oracleKeys[0] as PublicKey).equals(feedIdAsKey(FEED_IDS['SO
 
 `scripts/verify-pyth-bank.ts` 在 devnet 上验证了两个方向:存 pSOL 借 tUSDC(Pyth 价格作抵押)、存 tUSDC 借 pSOL(Pyth 价格作负债)。
 
-## 价格保鲜:在交易里顺手刷新,前端无感
+## 价格保鲜:在交易里顺手刷新,前端无感(后续增补)
+
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):D-017。`ep8-end` 时的版本用的是后台价格维护进程(`scripts/price-keeper.ts`,仍保留但已不是必需)。
 
 marginfi 要求价格在 `oracle_max_age`(我们配的是 240 秒)内更新过,否则借款和取款会失败。真实的 Switchboard 靠 oracle 持续推送;我们用的是 mock 价格(EP3),需要有人定时把价格账户的时间戳重写一次。
 
@@ -262,7 +268,9 @@ if (request.action === 'borrow' || request.action === 'withdraw') {
 
 `scripts/price-keeper.ts` 还保留着,但**不再是必需的**。
 
-## 页面多快能反映出你刚发的交易
+## 页面多快能反映出你刚发的交易(后续增补)
+
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):D-017。
 
 最初的实时跟随只入库 `finalized` 的数据,交易确认后还要再等 30 秒以上页面才变化——用户点完借款,借贷池的数字半天不动。
 

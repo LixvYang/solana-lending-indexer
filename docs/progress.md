@@ -39,6 +39,8 @@
 
 - 2026-10-14:价格自动保鲜(不依赖后台进程)、confirmed 乐观入库 + 终局清扫、SOL/tSOL/tUSDC 任意互换、界面静默刷新(D-016、D-017)。
 
+- 2026-10-17:对外准备:项目改用 MIT 许可证(marginfi IDL 的 Apache-2.0 声明见 THIRD_PARTY_NOTICES.md);`ep8-end` 之后加的内容在章节中标为「后续增补」。测试偶发的 PGlite 原生崩溃(D-013/D-015)经用户决定暂不处理。
+
 - 2026-10-17:全新 clone 实测"只需 RPC"的只读路径,修复回填失败、多池混杂、pSOL 无标签三处问题(D-022)。
 
 - 2026-10-17:tSOL/tUSDC/pSOL 写入 Metaplex 链上元数据,图标托管在本仓库 assets/tokens(D-021)。

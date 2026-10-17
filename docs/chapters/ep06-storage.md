@@ -75,6 +75,8 @@ export async function insertRawTx(db: Db, tx: RawTransaction, finalized = true):
 ```
 <!-- /snippet -->
 
+> **后续增补**(第 8 集代码定稿 `ep8-end` 之后才加的,只在 `main` 上,各集 tag 里没有):上面的 `finalized` 参数是为实时跟随按 confirmed 乐观入库加的(EP8「页面多快能反映出你刚发的交易」、D-017);`ep6-end` 里的版本没有它,行为等同于 `finalized = true`。
+
 ### 游标与原始数据同事务
 
 <!-- snippet: src/ingest/tail.ts#ep6-cursor-tx -->
