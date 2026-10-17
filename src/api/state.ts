@@ -1,4 +1,6 @@
 /** INPUT: Db 最新账户行与 labels。 OUTPUT: 视图组装用的强类型状态。 POSITION: EP7 数据读取边界。 SYNC: 同步 folder.md。 */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { Db, Row } from '../store/db';
 import { fromJson } from '../store/json';
 import { marginfiIdl } from '../decoder/idl';
@@ -57,6 +59,10 @@ export interface State {
  * 设置 POOL_GROUP 后，池子、账户都只看这个 group；不设置时保持原行为(多个 group 并存时 pool.group 为 null，不猜)。
  */
 export const poolGroup = () => process.env.POOL_GROUP || null;
+/** 没设 POOL_GROUP 时的默认池子:作者在 devnet 上的部署(program/devnet.json)。只在库里真有这个池子时才用,自己部署的人不受影响。 */
+function deployedGroup(): string | null {
+  try { return (JSON.parse(readFileSync(resolve('program/devnet.json'), 'utf8')) as { group?: string }).group ?? null; } catch { return null; }
+}
 
 export async function readState(db: Db): Promise<State> {
   const rows = (await db.query('SELECT DISTINCT ON (address) * FROM account_states ORDER BY address, slot DESC')).rows;
@@ -76,7 +82,8 @@ export async function readState(db: Db): Promise<State> {
     if (feed)
       state.feeds[address] = feed;
   }
-  const only = poolGroup();
+  const fallback = deployedGroup();
+  const only = poolGroup() ?? (fallback && Object.values(state.banks).some(b => b.group === fallback) ? fallback : null);
   if (only) {
     state.banks = Object.fromEntries(Object.entries(state.banks).filter(([, b]) => b.group === only));
     state.groups = Object.fromEntries(Object.entries(state.groups).filter(([a]) => a === only));

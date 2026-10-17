@@ -57,14 +57,22 @@ export async function snapshotAccounts(db: Db, rpc: AccountRpc, addresses: strin
 }
 // #endregion
 
-export function oracleOwners(config = process.env.ORACLE_OWNERS, idsPath = resolve('program/out/program-ids.json')): Set<string> {
+/**
+ * 允许作为价格账户 owner 的程序:真 Switchboard、Pyth Receiver,加上 mock 价格账户所属的 mocks 程序。
+ * mocks 地址先看自己构建的 program/out/program-ids.json;没构建过(只读跟随作者的部署)就用入库的 program/devnet.json。
+ */
+export function oracleOwners(config = process.env.ORACLE_OWNERS, idsPath = resolve('program/out/program-ids.json'),
+  deployedPath = resolve('program/devnet.json')): Set<string> {
   if (config !== undefined) return new Set(config.split(',').map(s => s.trim()).filter(Boolean));
   const owners = new Set(['Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2', PYTH_RECEIVER.toBase58()]);
-  try {
-    const ids = JSON.parse(readFileSync(idsPath, 'utf8'));
-    if (typeof ids.mocks !== 'string' || !ids.mocks) throw new Error('missing mocks program id');
-    owners.add(ids.mocks);
-  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  for (const path of [idsPath, deployedPath]) {
+    try {
+      const ids = JSON.parse(readFileSync(path, 'utf8'));
+      if (typeof ids.mocks !== 'string' || !ids.mocks) throw new Error('missing mocks program id');
+      owners.add(ids.mocks);
+      break;
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  }
   return owners;
 }
 /** owner 或布局错误拒绝整批，不把外部账户内容当价格。缺失账户报告后保留历史快照。 */

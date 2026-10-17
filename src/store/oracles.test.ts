@@ -33,6 +33,8 @@ test('oracle snapshots validate all owners, keep raw/context slot, survive rebui
   await rebuildDecoded(db,marginfiIdl);
   assert.deepEqual((await db.query("SELECT * FROM account_states WHERE type='switchboardPullFeed' ORDER BY address")).rows,rows);
   assert.deepEqual([...oracleOwners(' one, two ,one ', '/nonexistent')],['one','two']);
-  assert.deepEqual([...oracleOwners(undefined,'/nonexistent')],['Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2','rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ']);
+  assert.deepEqual([...oracleOwners(undefined,'/nonexistent','/nonexistent')],['Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2','rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ']);
+  // 全新 clone 没有 program/out(被 .gitignore 排除,里面有密钥):退回入库的部署记录,mock 价格账户仍能入库。
+  assert.ok(oracleOwners(undefined,'/nonexistent').has('3UNhKQCzvj4ZXRP7BBy25STrRAh8VMtBiKmXimGUWAt7'));
  } finally {await db.close();}
 });
