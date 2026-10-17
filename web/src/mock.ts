@@ -21,7 +21,7 @@ export function installMock() {
   const liquidation = new URLSearchParams(location.search).get('mock') === 'liquidation';
   const bank = (address: string, label: string, mint: string, decimals: number, price: number, dep: string, bor: string, depUsd: number, borUsd: number): BankView => {
     const u = depUsd ? borUsd / depUsd : 0;
-    return { address, mint, label, decimals, price, price_updated_at: new Date().toISOString(), oracle_feed: null, total_deposits: dep, total_borrows: bor,
+    return { address, mint, label, decimals, price, price_updated_at: new Date().toISOString(), oracle_feed: null, oracle_source: 'mock', total_deposits: dep, total_borrows: bor,
       total_deposits_usd: depUsd, total_borrows_usd: borUsd, utilization: u, lending_apr: rates(u).lending_apr, borrowing_apr: rates(u).borrowing_apr,
       weights: label === 'tSOL' ? { asset_init: 0.8, asset_maint: 0.9, liability_init: 1.1, liability_maint: 1.05 } : { asset_init: 1, asset_maint: 1, liability_init: 1.1, liability_maint: 1.05 },
       curve, asset_share_value: '1.000000155398776513', liability_share_value: '1.000000445109712643', last_accrual_at: new Date().toISOString() };

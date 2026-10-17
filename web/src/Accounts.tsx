@@ -1,5 +1,6 @@
 import type { AccountStatus, AccountView, PoolView } from '@contract';
 import { fmtToken, fmtUsd, short } from './format';
+import { TokenIcon } from './tokens';
 
 const ICON = {
   no_debt: <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="6" cy="6" r="4.5" /><path d="M3.5 6h5" /></svg>,
@@ -18,7 +19,7 @@ export function StatusBadge({ status }: { status: AccountStatus }) {
 export function Accounts({ accounts, pool }: { accounts: AccountView[]; pool: PoolView }) {
   const decimals = Object.fromEntries(pool.banks.map((b) => [b.address, b.decimals]));
   const list = (items: { bank: string; label: string; amount: string }[]) => items.length
-    ? items.map((i) => <div key={i.bank}>{fmtToken(i.amount, decimals[i.bank] ?? 0)} <span className="muted">{i.label}</span></div>)
+    ? items.map((i) => <div key={i.bank} className="amt"><TokenIcon symbol={i.label} size={16} />{fmtToken(i.amount, decimals[i.bank] ?? 0, 4)} <span className="muted">{i.label}</span></div>)
     : <span className="muted">—</span>;
   return (
     <div className="card">

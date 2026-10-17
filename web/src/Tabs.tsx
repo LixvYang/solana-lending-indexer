@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
-export type TabId = 'pool' | 'accounts' | 'activity' | 'wallet';
-export const TAB_IDS: TabId[] = ['pool', 'accounts', 'activity', 'wallet'];
+export type TabId = 'pool' | 'wallet' | 'swap' | 'accounts' | 'activity';
+export const TAB_IDS: TabId[] = ['pool', 'wallet', 'swap', 'accounts', 'activity'];
 
 const fromHash = (): TabId => {
   const id = location.hash.slice(1) as TabId;
@@ -9,7 +9,7 @@ const fromHash = (): TabId => {
 };
 
 /**
- * 当前 tab 记在 URL hash 里(#pool / #accounts …):刷新、复制链接、浏览器后退都能回到同一个 tab,
+ * 当前 tab 记在 URL hash 里(#pool / #swap …):刷新、复制链接、浏览器后退都能回到同一个 tab,
  * 录视频时也可以直接打开某个 tab。
  */
 export function useTab() {

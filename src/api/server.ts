@@ -9,6 +9,7 @@ import { readJson, corsHeaders, allowOrigin } from './http-body';
 import { buildTransaction, PriceStale } from './builder';
 import { sendTransaction } from './send';
 import { getWallet } from './wallet';
+import type { ClientConfig } from './types';
 import type { WalletServices } from './wallet-rpc';
 export function portNumber(value: string | undefined): number {
   if (value === undefined)
@@ -63,6 +64,9 @@ export async function route(db: Db, method: string, requestUrl: string, input?: 
         break;
       case '/api/pool':
         body = await getPool(db);
+        break;
+      case '/api/config': // 前端在连钱包之前就要知道兑换台在哪(水龙头与兑换台是同一个独立进程)
+        body = { faucet_url: services?.faucetUrl ?? null } satisfies ClientConfig;
         break;
       case '/api/accounts':
         body = await getAccounts(db);

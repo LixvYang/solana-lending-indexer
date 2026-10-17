@@ -27,7 +27,7 @@ export function tokenInfo(mint: PublicKey, owner: PublicKey, amount: bigint): Ac
   return { data, owner: TOKEN_PROGRAM_ID, lamports: 1, executable: false, rentEpoch: 0 };
 }
 export function fakeRpc(overrides: Partial<WalletRpc> = {}): WalletRpc {
-  return {
+  const rpc = {
     getLatestBlockhash: async commitment => { if (commitment !== 'confirmed') throw Error('wrong commitment'); return { blockhash: PublicKey.default.toBase58(), lastValidBlockHeight: 999 }; },
     simulateTransaction: async () => ({ context: { slot: 1 }, value: { err: null, logs: [], unitsConsumed: 123 } }),
     getAccountInfo: async key => Object.values(addresses.feeds).includes(key.toBase58()) ? feedInfo() : null,
@@ -36,6 +36,8 @@ export function fakeRpc(overrides: Partial<WalletRpc> = {}): WalletRpc {
     getSignatureStatuses: async () => ({ context: { slot: 20 }, value: [{ slot: 20, confirmations: 1, err: null, confirmationStatus: 'confirmed' }] }),
     ...overrides,
   } as WalletRpc;
+  // 批量读取委托给(可能被覆盖的)单个读取,测试只需要覆盖 getAccountInfo。
+  return { ...rpc, getMultipleAccountsInfo: overrides.getMultipleAccountsInfo ?? (async (keys: PublicKey[], c: unknown) => Promise.all(keys.map(k => rpc.getAccountInfo(k, c as never)))) } as WalletRpc;
 }
 export const services = (overrides: Partial<WalletRpc> = {}) => ({ rpc: fakeRpc(overrides), clock: fakeClock(), oracleOwners: new Set([mockOwner.toBase58()]) });
 export const builtTx = (base64: string) => VersionedTransaction.deserialize(Buffer.from(base64, 'base64'));

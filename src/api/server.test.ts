@@ -16,6 +16,9 @@ test('HTTP routes 200/400/404, CORS, safe 500, bigint JSON, health DB probe with
   }
   for(const url of ['/api/activity?limit=NaN','/api/activity?limit=0','/api/activity?limit=1.1','/api/activity?before=bad','/api/rate-curve','/api/rate-curve?bank=invalid','/api/tx/%ZZ'])assert.equal((await route(db,'GET',url)).status,400);
   for(const url of ['/missing',`/api/tx/${encodeBase58(Buffer.alloc(64,1))}`,`/api/rate-curve?bank=${encodeBase58(Buffer.alloc(32,1))}`])assert.equal((await route(db,'GET',url)).status,404);
+  // 公开配置:没有钱包 RPC 时兑换台地址为 null;有则原样返回(不含 RPC 等敏感配置)。
+  assert.deepEqual(JSON.parse((await route(db,'GET','/api/config')).body),{faucet_url:null});
+  assert.deepEqual(JSON.parse((await route(db,'GET','/api/config',undefined,{faucetUrl:'http://localhost:8788/faucet'} as never)).body),{faucet_url:'http://localhost:8788/faucet'});
   assert.equal((await route(db,'POST','/api/pool')).status,404);assert.equal((await route(db,'OPTIONS','/api/pool')).status,204);
   const bad:Db={query:async()=>{throw Error('DATABASE_URL postgres://secret RPC_URL https://host?api-key=secret');},transaction:db.transaction};
   const failure=await route(bad,'GET','/api/health');assert.equal(failure.status,500);assert.equal(failure.body,'{"error":"internal server error"}');

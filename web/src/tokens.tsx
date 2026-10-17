@@ -1,0 +1,74 @@
+/**
+ * 代币的展示信息:名称、说明、图标。链上没有这些(测试币没有 Metaplex 元数据),所以放在前端,按符号查。
+ * 图标是内联 SVG,不依赖外部图片;测试币在右下角加一个角标,和真 SOL 一眼区分开。
+ */
+export interface TokenMeta { symbol: string; name: string; description: string; badge?: { text: string; color: string } }
+
+const TOKENS: Record<string, TokenMeta> = {
+  SOL: { symbol: 'SOL', name: 'Solana', description: 'Solana 原生代币,用来付手续费和账户租金。兑换台按 Pyth SOL/USD 实时价计价。' },
+  pSOL: { symbol: 'pSOL', name: 'Pyth 定价测试 SOL', badge: { text: 'P', color: '#7c4dff' },
+    description: '价格跟随 Pyth devnet 的 SOL/USD 实时行情(约 1–2 分钟更新一次),用来演示真实预言机。' },
+  tSOL: { symbol: 'tSOL', name: '测试 SOL(mock 价)', badge: { text: 't', color: '#eb6834' },
+    description: '剧本里的抵押品。价格由我们写进 Switchboard 布局的 mock 账户,可以随时调低来演示清算。' },
+  tUSDC: { symbol: 'tUSDC', name: '测试 USDC', badge: { text: 't', color: '#eb6834' },
+    description: '测试稳定币,mock 价格固定 $1。剧本里被借出、被清算偿还的就是它。' },
+};
+
+export const tokenMeta = (symbol: string): TokenMeta =>
+  TOKENS[symbol] ?? { symbol, name: symbol, description: '没有登记的代币。' };
+
+// Solana 标志的三根斜条(32×32 坐标)。
+const BARS = 'M11 9.2h13l-3 3.3H8zM8 14.4h13l3 3.3H11zM11 19.6h13l-3 3.3H8z';
+
+function Base({ symbol, id }: { symbol: string; id: string }) {
+  if (symbol === 'tUSDC') return (<>
+    <circle cx="16" cy="16" r="16" fill="#2775ca" />
+    <circle cx="16" cy="16" r="10.5" fill="none" stroke="#fff" strokeWidth="1.6" strokeDasharray="12 4.5" transform="rotate(-30 16 16)" />
+    <text x="16" y="21" textAnchor="middle" fontSize="14" fontWeight="700" fill="#fff" fontFamily="system-ui, sans-serif">$</text>
+  </>);
+  const bg = symbol === 'SOL' ? '#111014' : symbol === 'pSOL' ? `url(#${id}-p)` : '#2b2540';
+  return (<>
+    <defs>
+      <linearGradient id={`${id}-g`} x1="8" y1="23" x2="24" y2="9" gradientUnits="userSpaceOnUse"><stop stopColor="#9945ff" /><stop offset="1" stopColor="#14f195" /></linearGradient>
+      <linearGradient id={`${id}-p`} x1="0" y1="32" x2="32" y2="0" gradientUnits="userSpaceOnUse"><stop stopColor="#3b1f8f" /><stop offset="1" stopColor="#7c4dff" /></linearGradient>
+    </defs>
+    <circle cx="16" cy="16" r="16" fill={bg} />
+    <path d={BARS} fill={symbol === 'SOL' ? `url(#${id}-g)` : symbol === 'pSOL' ? '#fff' : '#c9c2ec'} />
+  </>);
+}
+
+/** 代币图标。size 为像素;角标标明"测试币"。 */
+export function TokenIcon({ symbol, size = 24 }: { symbol: string; size?: number }) {
+  const meta = tokenMeta(symbol), id = `tk-${symbol}-${size}`;
+  const known = symbol in TOKENS;
+  return (
+    <svg className="token-icon" width={size} height={size} viewBox="-1 -1 36 36" role="img" aria-label={symbol}>
+      {known ? <Base symbol={symbol} id={id} /> : <>
+        <circle cx="16" cy="16" r="16" fill="var(--axis)" />
+        <text x="16" y="21" textAnchor="middle" fontSize="13" fontWeight="700" fill="var(--ink)">{symbol.slice(0, 2)}</text></>}
+      {meta.badge && <g>
+        <circle cx="27.5" cy="27.5" r="6.5" fill={meta.badge.color} stroke="var(--surface)" strokeWidth="2" />
+        <text x="27.5" y="30.6" textAnchor="middle" fontSize="8.5" fontWeight="800" fill="#fff" fontFamily="system-ui, sans-serif">{meta.badge.text}</text>
+      </g>}
+    </svg>
+  );
+}
+
+/** 图标 + 符号 + 名称,用在表格第一列和选择器里。 */
+export function TokenName({ symbol, size = 32, sub }: { symbol: string; size?: number; sub?: React.ReactNode }) {
+  const meta = tokenMeta(symbol);
+  return (
+    <span className="token-name">
+      <TokenIcon symbol={symbol} size={size} />
+      <span><b>{symbol}</b><span className="muted">{sub ?? meta.name}</span></span>
+    </span>
+  );
+}
+
+/** 价格来源角标:Pyth 实时 vs 我们写入的 mock。 */
+export function SourceChip({ source }: { source: string | null | undefined }) {
+  if (!source) return null;
+  return source === 'pyth'
+    ? <span className="src live" title="价格来自 Pyth devnet 的实时行情">Pyth 实时</span>
+    : <span className="src" title="价格由我们写入 Switchboard 布局的 mock 账户">mock 价</span>;
+}

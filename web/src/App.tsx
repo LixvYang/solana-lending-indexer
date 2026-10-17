@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { WalletAction } from '@contract';
+import type { ClientConfig, WalletAction, WalletView } from '@contract';
+import { chain } from './wallet/chain';
 import { api } from './api';
 import { usePoll } from './hooks';
 import { Kpis } from './Kpis';
-import { BankTable } from './BankTable';
+import { Markets } from './Markets';
+import { SwapPage } from './swap/SwapPage';
 import { BankDetail } from './BankDetail';
 import { RateCurve } from './RateCurve';
 import { Accounts } from './Accounts';
@@ -30,7 +32,8 @@ function useTheme() {
 export function App() {
   const [theme, cycle] = useTheme();
   const [tab, go] = useTab();
-  const { connected } = useWallet();
+  const { connected, publicKey } = useWallet();
+  const address = publicKey?.toBase58() ?? null;
   const [bank, setBank] = useState<string | null>(null);
   const [tx, setTx] = useState<string | null>(null);
   const [preset, setPreset] = useState<WalletPreset | null>(null);
@@ -45,21 +48,23 @@ export function App() {
   const selected = pool.data?.banks.find((b) => b.address === bank) ?? pool.data?.banks[0] ?? null;
   const curve = usePoll(() => (selected ? api.rateCurve(selected.address) : Promise.resolve(null)), [selected?.address]);
   const close = useCallback(() => setTx(null), []);
-  const act = useCallback((action: WalletAction) => {
-    if (!selected) return;
-    setPreset({ action, bank: selected.address, nonce: Date.now() });
-    go('wallet');
-  }, [selected, go]);
+  const config = usePoll<ClientConfig>(api.config, [], 60_000).data;
+  // 钱包余额只在这里轮询一次,"我来操作"和"兑换"共用(每次都要走 RPC,不要两个 tab 各拉一份)。
+  const wallet = usePoll<WalletView | null>(() => (address ? chain.wallet(address) : Promise.resolve(null)), [address, fast], fast ? 1500 : 6000).data;
+  const actOn = useCallback((bank: string, action: WalletAction) => { setPreset({ action, bank, nonce: Date.now() }); go('wallet'); }, [go]);
+  const act = useCallback((action: WalletAction) => { if (selected) actOn(selected.address, action); }, [selected, actOn]);
+  const goSwap = useCallback(() => go('swap'), [go]);
   const error = pool.error ?? accounts.error ?? activity.error;
 
   const risky = accounts.data?.filter((a) => a.status === 'liquidatable').length ?? 0;
   const tabs: TabDef[] = [
     { id: 'pool', label: '借贷池' },
+    { id: 'wallet', label: '我来操作', badge: connected ? <span className="live-dot" title="钱包已连接" /> : undefined },
+    { id: 'swap', label: '兑换' },
     { id: 'accounts', label: '账户', badge: accounts.data && (risky
       ? <span className="count crit" title={`${risky} 个账户可被清算`}>{risky} 可清算</span>
       : <span className="count">{accounts.data.length}</span>) },
     { id: 'activity', label: '链上活动' },
-    { id: 'wallet', label: '我来操作', badge: connected ? <span className="live" title="钱包已连接" /> : undefined },
   ];
 
   return (
@@ -80,9 +85,9 @@ export function App() {
         <>
           <TabPanel id="pool" active={tab}>
             <Kpis pool={pool.data} />
-            <div style={{ marginBottom: 16 }}><BankTable pool={pool.data} selected={selected?.address ?? null} onSelect={setBank} /></div>
+            <div style={{ marginBottom: 16 }}><Markets pool={pool.data} selected={selected?.address ?? null} onSelect={setBank} onAct={actOn} /></div>
             <div className="grid curve">
-              <div className="card"><h2>利率曲线<small>{curve.data?.label ?? ''} · 点上表的行切换代币</small></h2>{curve.data ? <RateCurve curve={curve.data} /> : <div className="muted">加载中…</div>}</div>
+              <div className="card"><h2>利率曲线<small>{curve.data?.label ?? ''} · 点上表的行切换资产</small></h2>{curve.data ? <RateCurve curve={curve.data} /> : <div className="muted">加载中…</div>}</div>
               {selected && <BankDetail bank={selected} onAct={act} />}
             </div>
           </TabPanel>
@@ -93,7 +98,10 @@ export function App() {
             {activity.data ? <Activity first={activity.data.items} next={activity.data.next_before} pool={pool.data} onOpen={setTx} /> : <div className="muted">加载中…</div>}
           </TabPanel>
           <TabPanel id="wallet" active={tab}>
-            <WalletPanel banks={pool.data.banks} accounts={accounts.data ?? []} onTransaction={boost} onOpenTx={setTx} fast={fast} preset={preset} />
+            <WalletPanel banks={pool.data.banks} accounts={accounts.data ?? []} onTransaction={boost} onOpenTx={setTx} onGoSwap={goSwap} wallet={wallet} preset={preset} />
+          </TabPanel>
+          <TabPanel id="swap" active={tab}>
+            <SwapPage faucetUrl={config?.faucet_url ?? null} onDone={boost} wallet={wallet} />
           </TabPanel>
         </>
       )}

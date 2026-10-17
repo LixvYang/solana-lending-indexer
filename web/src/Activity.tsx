@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ActivityItem, PoolView } from '@contract';
 import { api } from './api';
 import { fmtTime, fmtToken, short } from './format';
+import { TokenIcon } from './tokens';
 
 export function Activity({ first, next, pool, onOpen }: { first: ActivityItem[]; next: string | null; pool: PoolView; onOpen: (signature: string) => void }) {
   const [more, setMore] = useState<ActivityItem[]>([]);
@@ -21,7 +22,7 @@ export function Activity({ first, next, pool, onOpen }: { first: ActivityItem[];
             <td className="muted">{fmtTime(i.block_time)}<div className="mono">slot {i.slot}</div></td>
             <td><span className="mono">{i.instruction}</span></td>
             <td>{i.account_label ?? short(i.account)}</td>
-            <td>{i.bank_label ?? short(i.bank)}</td>
+            <td>{i.bank_label ? <span className="amt"><TokenIcon symbol={i.bank_label} size={18} />{i.bank_label}</span> : short(i.bank)}</td>
             <td className="n">{i.amount != null && i.bank ? fmtToken(i.amount, decimals[i.bank] ?? 0) : <span className="muted">—</span>}</td>
             <td><span className={`chip ${i.ok ? 'ok' : 'bad'}`}>{i.ok ? '成功' : '失败'}</span></td>
           </tr>))}</tbody>
