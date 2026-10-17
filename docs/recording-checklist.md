@@ -33,7 +33,7 @@ pnpm exec tsx scripts/faucet.ts               # 终端 4:水龙头 + 兑换台(�
 
 ## 每集都要说的诚实声明
 
-价格是"布局一致的 mock"(devnet 上 Switchboard oracle 离线)。
+tSOL/tUSDC 的价格是"布局一致的 mock"(Switchboard 已关停,见 D-018);pSOL 是 Pyth 真实行情(D-019)。
 
 ## 录完之后
 

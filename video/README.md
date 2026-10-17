@@ -16,7 +16,7 @@ pnpm exec tsx scripts/reindex.ts   # 需要干净数据时:清库后 ingest --ba
 
 ## 每集都要说的一句话(诚实声明)
 
-> 价格是"布局一致的 mock":devnet 上 Switchboard 的 oracle 目前整体离线,所以价格由我们自己写入一个与真实账户字节布局完全一致的账户。除此之外,程序、交易、清算都是真实的。
+> 价格:tSOL/tUSDC 是"布局一致的 mock"(要能打低价格演示清算;Switchboard 已于 2026-09 关停,见 D-018),由我们写入一个与真实账户字节布局完全一致的账户;pSOL 用 Pyth devnet 真实行情(D-019)。除此之外,程序、交易、清算都是真实的。
 
 ## 表格列含义
 

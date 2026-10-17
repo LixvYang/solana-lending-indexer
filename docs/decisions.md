@@ -447,3 +447,13 @@ codex 的 M7a 离线测试通过后,接上真实 devnet(Helius)、真实 Postgre
 - 独立核对:Helius DAS `getAsset` 对三个 mint 解析出正确的名称、符号、JSON 与图片地址。
 
 **未验证:** 真实 Phantom/Solflare 里的显示效果(钱包可能对未认证的 devnet 代币做缓存或折叠);raw.githubusercontent.com 有几分钟缓存,改图后钱包可能延迟刷新。名称是中文,个别钱包的字体回退效果未看过。
+
+## D-022 全新 clone 的只读路径(2026-10-17,实测修复)
+
+为评估能否对外,从 GitHub 全新 clone 到临时目录、只给 `RPC_URL`、用空数据库走"接入作者部署"的路径。发现三处只有陌生人才会碰到的问题(作者本机都有本地文件,从没暴露):
+
+1. **回填直接失败**:`oracle owner mismatch`。索引器从 `program/out/program-ids.json` 读 mocks 程序地址,而 `program/out/` 被 .gitignore 排除(里面有程序私钥,必须排除)。→ 新增入库的 `program/devnet.json`(只有公开地址),`oracleOwners` 在没有本地构建产物时退回读它。
+2. **不设 POOL_GROUP 时四个池子混在一起**,API 的 group 为 null。→ 没设时默认作者的池子,但只在库里确实有这个池子时才用,自己部署的人不受影响。
+3. **pSOL 没有标签**(显示地址缩写、没有图标,水龙头/兑换台也找不到它),因为 `load-labels` 只导入剧本 fixture。→ `program/devnet.json` 增加 `labels`,默认导入时一并写入。
+
+修复后同一个全新 clone:回填与价格快照成功、对账通过、API 默认展示作者的池子(pSOL 走 Pyth、tSOL/tUSDC 走 mock)、12 个账户。README 新增这条"只需 RPC"的快速开始,并改正多处"Switchboard 暂时离线"的过时说法(已关停,D-018)。

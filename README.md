@@ -14,9 +14,12 @@
 - 一个**API 和前端**,其中的"X 光"能并排看到一笔交易的原始字节、解码结果、数据库行。
 - **钱包交互**(可选的第 8 集):连接 devnet 钱包,对借贷池存款、取款、借款、还款;有水龙头、SOL/tSOL/tUSDC 任意互换的兑换台,以及端到端验收脚本。价格由交易自动保鲜,不依赖后台进程。
 
-## ⚠️ 先说清楚:价格是"布局一致的 mock"
+## ⚠️ 先说清楚:价格从哪来
 
-devnet 上 Switchboard 的 oracle 目前整体离线(实测:191 个 oracle 账户的心跳全部超时),无法给自建的测试币喂价。所以价格由我们写入一个**与真实 Switchboard 价格账户字节布局完全一致**的账户,marginfi 走的仍是读取 Switchboard 价格的那条代码路径。**除价格来源外,其余全部是真实的链上行为。** 详见 [EP3](docs/chapters/ep03-protocol-and-scenario.md) 与 [D-008 / D-009](docs/decisions.md)。
+- **tSOL / tUSDC 是"布局一致的 mock"。** 剧本要能把价格打低来演示清算,真实行情做不到;而且 Switchboard 已于 2026-09 整体关停([D-018](docs/decisions.md))。所以价格由我们写入一个**与真实 Switchboard 价格账户字节布局完全一致**的账户,marginfi 走的仍是读取 Switchboard 价格的那条代码路径。详见 [EP3](docs/chapters/ep03-protocol-and-scenario.md) 与 [D-008 / D-009](docs/decisions.md)。
+- **pSOL 是真实行情:** 价格来自 Pyth devnet 的 SOL/USD([D-019](docs/decisions.md))。
+
+**除价格来源外,其余全部是真实的链上行为。**
 
 ## 章节
 
@@ -45,7 +48,22 @@ pnpm typecheck && pnpm test      # 全部离线,约 20 秒;数据库用进程内
 pnpm exec tsx scripts/decode-tx.ts 4FRUHaLGRdvAcV88XtTgCUGE76oAE1tKFqL5dEodxsmJhUgshUnEnkxKXEdn3q2r2XFRPTMihAfgsUQpuMhQivjt
 ```
 
-**完整跑一遍(需要 devnet RPC 与有 SOL 的钱包):**
+**接入作者在 devnet 上的部署(只需要一个 RPC 地址,不用构建、部署、也不用钱包):**
+
+```bash
+cp .env.example .env                       # 只填 RPC_URL(例如 Helius 免费的 devnet 地址)
+docker compose up -d                       # Postgres,端口 5433
+pnpm exec tsx scripts/migrate.ts
+pnpm exec tsx scripts/ingest.ts --backfill # 回填作者部署的全部交易并解码、快照
+pnpm exec tsx scripts/load-labels.ts
+pnpm exec tsx scripts/verify-db.ts         # 读回对账
+pnpm exec tsx scripts/serve-api.ts &       # 默认展示作者的池子(program/devnet.json)
+(cd web && pnpm install && pnpm dev)       # http://localhost:5173
+```
+
+程序与池子的公开地址记在 [program/devnet.json](program/devnet.json)。钱包交互(存借、兑换)还需要水龙头/兑换台的专用钱包,见 EP8。
+
+**完整跑一遍:自己构建、部署、跑剧本(需要 devnet RPC 与有 SOL 的钱包):**
 
 ```bash
 cp .env.example .env                       # 填 RPC_URL、ANCHOR_WALLET

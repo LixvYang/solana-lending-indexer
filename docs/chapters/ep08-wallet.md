@@ -378,7 +378,7 @@ pnpm exec tsx scripts/e2e-wallet.ts
 - **只支持普通 SPL Token。** 不支持 Token-2022 和 staked asset 这类特殊的 remaining accounts。
 - **维护进程和改价工具并发时可能互相覆盖。** 它们都会写价格账户,可能读到旧价格后覆盖新值。如果不运行可选的维护进程,就没有这个问题。
 - **转发超时不等于交易没上链。** 原签名可能稍后成功,不要直接重复构建。
-- **价格是 mock。** Switchboard oracle 离线,见 EP3。
+- **tSOL/tUSDC 的价格是 mock**(Switchboard 已关停,D-018);pSOL 是 Pyth 真实行情。
 
 ## 回顾
 

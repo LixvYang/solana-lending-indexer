@@ -310,7 +310,7 @@ mrgn 自己的前端(`fluxor-ui-v4`,Next.js)是"链 → Next 路由 → 浏览�
 
 ## 局限(诚实地说)
 
-- **价格是布局一致的 mock。** devnet 上 Switchboard 的 oracle 离线,见 EP3。
+- **tSOL/tUSDC 的价格是布局一致的 mock。** 要能打低价格演示清算;Switchboard 已于 2026-09 关停(D-018)。pSOL 用 Pyth 真实行情(D-019)。
 - **不处理链重组**,只入库 finalized。
 - **账户状态只有快照**,没有逐笔历史。
 - **只覆盖剧本涉及的指令。** 其余的存成 `unknown`。
