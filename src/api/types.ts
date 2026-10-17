@@ -259,34 +259,45 @@ export interface FaucetResponse {
   next_allowed_at: string;
 }
 
-/* ───────────────────────── SOL 兑换测试币 ─────────────────────────
+/* ───────────────────────── 兑换(SOL / tSOL / tUSDC 任意两两互换) ─────────────────────────
  * 测试币是自己发行的,没有真实的 AMM 池子。兑换台是固定汇率的"原子兑换":一笔交易里同时
- * "用户转 SOL 给兑换台"和"兑换台转代币给用户",兑换台先签名、用户再签名,要么都发生要么都不发生。
- * 手续费和账户租金由用户付,兑换台只提供代币。汇率是固定的 mock,不是市场价。
+ * "用户把 A 转给兑换台"和"兑换台把 B 转给用户",兑换台先签名、用户再签名,要么都发生要么都不发生。
+ * 手续费和账户租金由用户付,兑换台只提供资产。汇率由统一的 USD 单价推导(三者之间自洽,不会有套利环),
+ * 是固定的 mock,不是市场价。
  */
-export type SwapToken = 'tSOL' | 'tUSDC';
+export type SwapAsset = 'SOL' | 'tSOL' | 'tUSDC';
+
+export interface SwapAssetView {
+  symbol: SwapAsset;
+  decimals: number;
+  /** 单价(USD),十进制字符串。 */
+  usd: string;
+}
 
 export interface SwapRatesView {
-  /** 1 SOL 换多少个该代币(UI 单位的十进制字符串)。 */
-  rates: Record<SwapToken, string>;
-  min_sol: string;
-  max_sol: string;
+  assets: SwapAssetView[];
+  /** 单笔兑换的价值下限/上限(USD)。 */
+  min_usd: string;
+  max_usd: string;
 }
 
 export interface SwapQuoteRequest {
   wallet: string;
-  token: SwapToken;
-  /** 用多少 SOL 换(UI 单位,如 "0.1")。 */
-  sol: string;
+  from: SwapAsset;
+  to: SwapAsset;
+  /** 要卖出的数量(from 的 UI 单位,如 "0.1")。 */
+  amount: string;
 }
 
 export interface SwapQuoteResponse {
   /** base64 的 v0 交易:已由兑换台签名,还差用户的签名。 */
   transaction: string;
   last_valid_block_height: number;
-  token: SwapToken;
-  sol_lamports: string;
-  /** 将收到的代币数量,原生单位。 */
+  from: SwapAsset;
+  to: SwapAsset;
+  /** 原生单位。 */
+  in_amount: string;
+  in_decimals: number;
   out_amount: string;
   out_decimals: number;
   summary: string;

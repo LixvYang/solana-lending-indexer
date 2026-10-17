@@ -3,6 +3,7 @@ import { Keypair, PublicKey, ComputeBudgetProgram, TransactionMessage, Versioned
 import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import type { Db } from '../../store/db';
 import { decodePullFeed } from '../../decoder/switchboard';
+import { mockFeedSigner, refreshTimestampIx } from '../../oracle/mock-write';
 import { oracleOwners } from '../../store/accounts';
 import { getPool } from '../queries';
 import { readState } from '../state';
@@ -14,9 +15,19 @@ import { programError, publicLogs } from '../program-error';
 import { chainWalletAccount, walletAccount, type BuildBank } from './state';
 import { remainingBanks, observation } from './remaining';
 import { initInstruction, lendingInstruction } from './instructions';
+/** 价格比这个新就不用刷新;marginfi 的上限是 oracle_max_age(我们配的是 240 秒)。 */
+const REFRESH_AFTER_SECONDS = 30n;
+
+async function clusterTime(services: WalletServices): Promise<bigint> {
+  // 用链上时间，不用本机时间:本机时钟快了会写出"未来"的时间戳。取不到(或测试里没有)才退回本机时钟。
+  try { const t = await services.rpc.getBlockTime(await services.rpc.getSlot('confirmed')); if (t) return BigInt(t); } catch { /* 退回 */ }
+  return BigInt(Math.floor((services.clock?.now() ?? Date.now()) / 1000));
+}
+
 export class PriceStale extends ApiError {
-  readonly view = { code: null, name: 'PriceStale', message: '价格维护进程没有运行，请等待价格更新。' };
-  constructor() { super(409, '价格维护进程没有运行，请等待价格更新。'); }
+  // 只在价格确实无法刷新时出现(比如价格账户不是我们的 mock,或从未有过价格)。不向用户暴露"维护进程"这类内部细节。
+  readonly view = { code: null, name: 'PriceStale', message: '价格暂时不可用，请稍后重试。' };
+  constructor() { super(409, '价格暂时不可用，请稍后重试。'); }
 }
 export async function buildTransaction(db: Db, services: WalletServices, input: unknown): Promise<BuildResponse> {
   const request = buildInput(input), pool = await getPool(db), state = await readState(db);
@@ -30,28 +41,42 @@ export async function buildTransaction(db: Db, services: WalletServices, input: 
     ? remainingBanks(user!.data.lending_account.balances, request.action, request.bank, request.all === true) : [];
   const banks = state.banks as Record<string, BuildBank>;
   const metas = observation(remaining, banks, pool.group);
+  // #region ep8-price-refresh
+  // 借款/取款要求价格新鲜。价格由谁来保鲜不该让用户操心:如果价格账户是我们自己的 mock(密钥公开派生),
+  // 就在这笔交易里顺手把时间戳刷新到当前链上时间——价格数值不动,手续费包含在用户这笔交易里。
+  // 这样不依赖任何后台进程;进程挂了、刚重启、网络抖动都不会让用户看到"价格过期"。
+  const refresh: { feed: PublicKey; program: PublicKey; signer: Keypair }[] = [];
+  let now = 0n;
   if (request.action === 'borrow' || request.action === 'withdraw') {
-    // 读取当前链上 feed，DB 中 keeper 尚未采样的旧价格不能作为新鲜度证据。
+    now = await clusterTime(services);
     for (const address of new Set([...remaining, request.bank])) {
-      const b = banks[address], feed = await services.rpc.getAccountInfo(new PublicKey(b.config.oracle_keys[0]), 'confirmed');
+      const feedKey = new PublicKey(banks[address].config.oracle_keys[0]);
+      const feed = await services.rpc.getAccountInfo(feedKey, 'confirmed'); // 读链上当前值，库里的快照不能作为新鲜度证据
       if (!feed || !(services.oracleOwners ?? oracleOwners()).has(feed.owner.toBase58())) throw new PriceStale();
-      const price = decodePullFeed(feed.data), maxAge = b.config.oracle_max_age; // 不编造默认值：上游对 SwitchboardPull 的 0 就是 0(只有旧的 SwitchboardV2/Pyth 才有默认)，0 会让价格永远算过期
-      const now = BigInt(Math.floor((services.clock?.now() ?? Date.now()) / 1000));
-      if (!price.sample_size || price.last_update_timestamp > now || (now - price.last_update_timestamp) * 2n > maxAge) throw new PriceStale();
+      const price = decodePullFeed(feed.data);
+      if (!price.sample_size) throw new PriceStale(); // 从未有过价格:没有可保鲜的值
+      const age = now - price.last_update_timestamp;
+      if (age <= REFRESH_AFTER_SECONDS && age >= 0n) continue; // 够新,不动(正常运行时这笔交易保持最小)
+      const signer = mockFeedSigner(feedKey);
+      if (!signer) throw new PriceStale(); // 不是我们的 mock(比如真实预言机):不能代为刷新
+      refresh.push({ feed: feedKey, program: feed.owner, signer });
     }
   }
+  // #endregion
   const ata = getAssociatedTokenAddressSync(new PublicKey(bank.mint), wallet);
   const instructions = [createAssociatedTokenAccountIdempotentInstruction(wallet, ata, wallet, new PublicKey(bank.mint)),
     ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })];
   // #region ep8-first-deposit
   // 账户不是 PDA；唯一一次性 keypair 只签自己的创建，不为用户付费，也不落盘。
   const fresh = user ? null : Keypair.generate(), account = user ? new PublicKey(user.address) : fresh!.publicKey;
+  for (const r of refresh) instructions.push(refreshTimestampIx(r.program, r.feed, now));
   if (fresh) instructions.push(await initInstruction(group, account, wallet));
   const amount = request.all ? 0n : BigInt(request.amount);
   instructions.push(await lendingInstruction(request.action, group, account, wallet, target, ata, amount, request.all === true, metas));
   const latest = await services.rpc.getLatestBlockhash('confirmed');
   const tx = new VersionedTransaction(new TransactionMessage({ payerKey: wallet, recentBlockhash: latest.blockhash, instructions }).compileToV0Message());
-  if (fresh) tx.sign([fresh]);
+  const preSigners = [...(fresh ? [fresh] : []), ...refresh.map(r => r.signer)];
+  if (preSigners.length) tx.sign(preSigners); // 一次性账户与公开的价格账户由服务端代签;用户的签名由钱包补上
   // #endregion
   if (tx.serialize().length > 1232) throw new ApiError(400, 'transaction exceeds 1232 bytes');
   // #region ep8-simulate

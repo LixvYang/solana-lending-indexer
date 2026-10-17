@@ -4,7 +4,7 @@
  *
  *   pnpm exec tsx scripts/e2e-wallet.ts
  *
- * 前提:API(8787)、水龙头(8788)、价格维护进程都在运行;.env 里有 RPC_URL 和 ANCHOR_WALLET。
+ * 前提:API(8787)、水龙头(8788)在运行(价格维护进程不是必须的:借款/取款交易会自动刷新价格时间戳);.env 里有 RPC_URL 和 ANCHOR_WALLET。
  * 管理员钱包只用来给新钱包转一点 SOL(付手续费和账户租金),因为水龙头只发测试代币。
  * 花费:约 0.06 SOL。
  */

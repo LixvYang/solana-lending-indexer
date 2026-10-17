@@ -10,11 +10,14 @@ test('migrations run once and create every table and query index', async () => {
   const db = pgliteDb();
   try {
     await migrate(db); await migrate(db);
-    assert.equal((await db.query('SELECT * FROM schema_migrations')).rowCount, 3);
+    assert.equal((await db.query('SELECT * FROM schema_migrations')).rowCount, 4);
     const tables = (await db.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).rows.map(r => r.tablename);
     for (const name of ['raw_tx', 'ingest_cursor', 'instructions', 'events', 'account_states', 'labels']) assert.ok(tables.includes(name));
     const indexes = (await db.query("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'")).rows.map(r => r.indexname);
-    for (const name of ['instructions_name_idx', 'events_name_idx', 'events_slot_idx', 'events_account_idx']) assert.ok(indexes.includes(name));
+    for (const name of ['instructions_name_idx', 'events_name_idx', 'events_slot_idx', 'events_account_idx', 'raw_tx_unfinalized_idx']) assert.ok(indexes.includes(name));
+    // 004:乐观入库的标记列,默认 TRUE(迁移前已有的行都是 finalized 入库的)
+    const column = (await db.query("SELECT column_default FROM information_schema.columns WHERE table_name = 'raw_tx' AND column_name = 'finalized'")).rows[0];
+    assert.match(String(column.column_default), /true/i);
   } finally { await db.close(); }
 });
 test('one failing SQL file rolls back its DDL and migration record', async () => {

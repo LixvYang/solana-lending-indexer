@@ -37,12 +37,16 @@
 
 - 2026-10-13:M7 完成。钱包全流程在真实 devnet 上通过(脚本与浏览器两条路径);新增 `--follow`、`POOL_GROUP`、`check-ready`、录制清单、EP8 文档与分镜。
 
+- 2026-10-14:价格自动保鲜(不依赖后台进程)、confirmed 乐观入库 + 终局清扫、SOL/tSOL/tUSDC 任意互换、界面静默刷新(D-016、D-017)。
+
+- 2026-10-17:前端改为四个 tab(借贷池 / 账户 / 链上活动 / 我来操作),新增代币参数卡与"存入/借出"直达;复查 Switchboard devnet oracle 仍离线(D-018)。
+
 ## 下一步
 
 1. **录制视频**:先拍 EP2–EP7,最后拍 EP1;EP8 可选。分镜在 `video/`,清单在 `docs/recording-checklist.md`,开拍前跑 `scripts/check-ready.ts`。
 2. 用真实 Phantom/Solflare 试一遍钱包交互(目前只用开发测试钱包验证过签名流程)。
-3. 监控 Switchboard devnet oracle,恢复后评估切回真实价格(`PRICE_ORACLE=switchboard`)。
-4. 已知待办:价格维护与改价的并发覆盖;账户状态逐笔历史;压测与长时间运行。
+3. 监控 Switchboard devnet oracle,恢复后评估切回真实价格(`PRICE_ORACLE=switchboard`)。2026-10-17 复查仍离线,见 D-018。
+4. 已知待办:账户状态逐笔历史;压测与长时间运行;在真实分叉上验证终局清扫的删除路径。
 
 ## M2 离线验收（2026-10-12）
 

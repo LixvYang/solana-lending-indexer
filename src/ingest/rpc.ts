@@ -12,10 +12,12 @@ export interface SignatureInfo { signature: string; err: unknown }
 export class RpcError extends Error {
   constructor(public readonly code: number, message: string) { super(message); this.name = 'RpcError'; }
 }
-interface Options { fetch?: typeof fetch; sleep?: (ms: number) => Promise<void>; retries?: number; delayMs?: number; timeoutMs?: number }
+export type Commitment = 'confirmed' | 'finalized';
+interface Options { /** 默认 finalized。confirmed 更快(约 1~2 秒),但极少数情况下会回滚——必须配合终局确认清扫(src/ingest/finalize.ts)。 */ commitment?: Commitment; fetch?: typeof fetch; sleep?: (ms: number) => Promise<void>; retries?: number; delayMs?: number; timeoutMs?: number }
 export class Rpc {
   private id = 0;
   constructor(private readonly url: string, private readonly options: Options = {}) {}
+  private get commitment(): Commitment { return this.options.commitment ?? 'finalized'; }
   private redact(message: string): string {
     const key = new URL(this.url).searchParams.get('api-key');
     let clean = message.replace(/([?&]api-key=)[^&\s"']*/gi, '$1[REDACTED]');
@@ -50,14 +52,19 @@ export class Rpc {
       }
     }
   }
-  getSlot() { return this.request<number>('getSlot', [{ commitment: 'finalized' }]); }
-  getBlocks(start: number, end: number) { return this.request<number[]>('getBlocks', [start, end, { commitment: 'finalized' }]); }
-  getBlock(slot: number) { return this.request<RpcBlock | null>('getBlock', [slot, { commitment: 'finalized', encoding: 'json',
+  getSlot() { return this.request<number>('getSlot', [{ commitment: this.commitment }]); }
+  /** 清扫用:无论入库用什么级别,判断"是否终局"永远看 finalized。 */
+  getFinalizedSlot() { return this.request<number>('getSlot', [{ commitment: 'finalized' }]); }
+  getSignatureStatuses(signatures: string[]) {
+    return this.request<{ value: ({ slot: number; confirmationStatus?: string; err: unknown } | null)[] }>('getSignatureStatuses', [signatures, { searchTransactionHistory: true }]).then(r => r.value);
+  }
+  getBlocks(start: number, end: number) { return this.request<number[]>('getBlocks', [start, end, { commitment: this.commitment }]); }
+  getBlock(slot: number) { return this.request<RpcBlock | null>('getBlock', [slot, { commitment: this.commitment, encoding: 'json',
     transactionDetails: 'full', rewards: false, maxSupportedTransactionVersion: MAX_TX_VERSION }]); }
   getSignaturesForAddress(address: string, before?: string) {
-    return this.request<SignatureInfo[]>('getSignaturesForAddress', [address, { commitment: 'finalized', limit: 1000, ...(before ? { before } : {}) }]);
+    return this.request<SignatureInfo[]>('getSignaturesForAddress', [address, { commitment: this.commitment, limit: 1000, ...(before ? { before } : {}) }]);
   }
   getTransaction(signature: string) { return this.request<RawTransaction | null>('getTransaction', [signature,
-    { commitment: 'finalized', encoding: 'json', maxSupportedTransactionVersion: MAX_TX_VERSION }]); }
-  getMultipleAccounts(addresses: string[]) { return this.request<AccountResponse>('getMultipleAccounts', [addresses, { commitment: 'finalized', encoding: 'base64' }]); }
+    { commitment: this.commitment, encoding: 'json', maxSupportedTransactionVersion: MAX_TX_VERSION }]); }
+  getMultipleAccounts(addresses: string[]) { return this.request<AccountResponse>('getMultipleAccounts', [addresses, { commitment: this.commitment, encoding: 'base64' }]); }
 }

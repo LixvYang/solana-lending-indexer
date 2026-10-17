@@ -11,7 +11,7 @@ export interface SignatureRpc {
  * 这样每轮跟随只需要一次 getSignaturesForAddress，而不是翻遍整个历史。
  * 代价是假设入库是连续的；回填(不带这个选项)不做这个假设，会翻完全部分页。
  */
-export async function backfill(db: Db, rpc: SignatureRpc, programId: string, options: { stopAtKnown?: boolean } = {}): Promise<number> {
+export async function backfill(db: Db, rpc: SignatureRpc, programId: string, options: { stopAtKnown?: boolean; finalized?: boolean } = {}): Promise<number> {
   let before: string | undefined, count = 0;
   for (;;) {
     const page = await rpc.getSignaturesForAddress(programId, before);
@@ -23,7 +23,7 @@ export async function backfill(db: Db, rpc: SignatureRpc, programId: string, opt
       if (!tx) throw new Error(`transaction unavailable: ${info.signature}`);
       if (tx.transaction.signatures[0] !== info.signature) throw new Error(`transaction signature mismatch: ${info.signature}`);
       // err 非空也入库；只有事件解码会跳过失败交易。
-      if (await insertRawTx(db, tx)) count++;
+      if (await insertRawTx(db, tx, options.finalized ?? true)) count++;
     }
     if (options.stopAtKnown && sawKnown) return count;
     const next = page.at(-1)!.signature;

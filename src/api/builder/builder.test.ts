@@ -2,11 +2,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { verify, createPublicKey } from 'node:crypto';
-import { PublicKey } from '@solana/web3.js';
+import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js';
 import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { deriveKeypair } from '../../../scenario/lib/actors';
 import { seedApi } from '../test-utils';
-import { addresses as a, services, builtTx, decodedInstructions, feedInfo } from '../wallet-test-utils';
+import { addresses as a, services, builtTx, decodedInstructions, feedInfo, mockOwner } from '../wallet-test-utils';
 import { buildTransaction, PriceStale } from './index';
 import { walletAccount } from './state';
 import { remainingBanks } from './remaining';
@@ -94,17 +94,66 @@ test('all four lending actions and optional all roundtrip decoder with exact u64
     await assert.rejects(buildTransaction(db, svc, { ...borrow, all: true }), /all requires/);
   } finally { await db.close(); }
 });
-test('live price half-age boundary, zero max-age fallback and PriceStale 409', async () => {
+// 用户撞到的真实问题:价格维护进程连续失败后退出,价格过期,借款/取款报"价格维护进程没有运行"。
+// 这不该让用户感知。构建器现在在价格不够新时,把"刷新时间戳"的指令放进这笔交易里。
+import { TIMESTAMP_OFFSET } from '../../oracle/mock-write';
+import { mockFeedSigner } from '../../oracle/mock-write';
+import { OFFSET } from '../../decoder/switchboard';
+import { createHash } from 'node:crypto';
+const writeDisc = createHash('sha256').update('global:write').digest().subarray(0, 8);
+const refreshesIn = (tx: VersionedTransaction) => {
+  const keys = tx.message.staticAccountKeys;
+  return tx.message.compiledInstructions.filter(ix => Buffer.from(ix.data).subarray(0, 8).equals(writeDisc)).map(ix => ({
+    program: keys[ix.programIdIndex].toBase58(), feed: keys[ix.accountKeyIndexes[0]].toBase58(),
+    offset: Number(Buffer.from(ix.data).readBigUInt64LE(8)), length: Buffer.from(ix.data).readUInt32LE(16), value: Buffer.from(ix.data).subarray(20) }));
+};
+const signedBy = (tx: VersionedTransaction, key: string) => {
+  const index = tx.message.staticAccountKeys.findIndex(k => k.toBase58() === key);
+  return index >= 0 && index < tx.message.header.numRequiredSignatures && tx.signatures[index].some(b => b !== 0);
+};
+test('价格过旧或在未来时,自动在交易里刷新时间戳:只写 8 字节、价格数值不动、价格账户由服务端代签、用户无感', async () => {
   const db = await seedApi(); try {
-    for (const timestamp of [1699999879, 1700000001]) {
-      const svc = services({ getAccountInfo: async () => feedInfo(timestamp) });
-      await assert.rejects(buildTransaction(db, svc, borrow), (e: unknown) => e instanceof PriceStale && e.status === 409 && e.view.name === 'PriceStale');
+    await preBorrow(db);
+    for (const timestamp of [1699999000, 1700000001, 1699999879]) { // 过旧 1000 秒 / 在未来 / 121 秒前
+      const response = await buildTransaction(db, services({ getAccountInfo: async () => feedInfo(timestamp) }), borrow);
+      const tx = builtTx(response.transaction), writes = refreshesIn(tx);
+      assert.ok(writes.length >= 1, `timestamp ${timestamp} 应该触发刷新`);
+      for (const w of writes) {
+        assert.equal(w.program, mockOwner.toBase58());
+        assert.equal(w.offset, TIMESTAMP_OFFSET); assert.equal(w.length, 8); assert.equal(w.value.length, 8); // 只动时间戳
+        assert.equal(w.value.readBigInt64LE(0), 1_700_000_000n);                                            // 刷新到"现在"
+        assert.ok(w.offset + 8 <= OFFSET.result, '没有碰到结果值(价格)所在的区域');
+        assert.ok(signedBy(tx, w.feed), '价格账户的签名由服务端补上');
+      }
+      assert.equal(decodedInstructions(tx)[0].name, 'lending_account_borrow'); // 业务指令仍在
+      assert.ok(tx.serialize().length <= 1232);
     }
-    await buildTransaction(db, services({ getAccountInfo: async () => feedInfo(1699999880) }), borrow);
-    await db.query("UPDATE account_states SET data=jsonb_set(data,'{config,oracle_max_age}','\"0\"') WHERE type='Bank'");
-    await assert.rejects(buildTransaction(db, services({ getAccountInfo: async () => feedInfo(1699999879) }), borrow), PriceStale);
-    await buildTransaction(db, services(), borrow);
-    await assert.rejects(buildTransaction(db, services({ getAccountInfo: async () => null }), borrow), PriceStale);
+  } finally { await db.close(); }
+});
+test('价格够新时不刷新:交易保持最小', async () => {
+  const db = await seedApi(); try {
+    await preBorrow(db);
+    for (const timestamp of [1700000000, 1699999980, 1699999970]) { // 刚更新 / 20 秒前 / 30 秒前
+      const response = await buildTransaction(db, services({ getAccountInfo: async () => feedInfo(timestamp) }), borrow);
+      assert.equal(refreshesIn(builtTx(response.transaction)).length, 0, `age ${1700000000 - timestamp}s 不需要刷新`);
+    }
+  } finally { await db.close(); }
+});
+test('不能刷新的才报 PriceStale(且文案不提内部细节):没有价格账户、从未有过价格、不是我们的 mock', async () => {
+  const db = await seedApi(); try {
+    await preBorrow(db);
+    for (const svc of [services({ getAccountInfo: async () => null }),                                   // 账户不存在
+      services({ getAccountInfo: async () => ({ ...feedInfo(1), owner: PublicKey.default }) })]) {         // owner 不在允许集合
+      await assert.rejects(buildTransaction(db, svc, borrow), (e: unknown) => e instanceof PriceStale && e.status === 409
+        && e.view.name === 'PriceStale' && !/维护|进程|keeper/.test(e.view.message));
+    }
+    // 从未有过价格(sample_size 为 0)
+    const never = feedInfo(1700000000); never.data[2215] = 0;
+    await assert.rejects(buildTransaction(db, services({ getAccountInfo: async () => never }), borrow), PriceStale);
+    // 不是我们的 mock(密钥不是公开派生的)就不能代为刷新
+    assert.equal(mockFeedSigner(Keypair.generate().publicKey), null);
+    assert.ok(mockFeedSigner(new PublicKey(a.feeds.tSOL)));
+    assert.ok(mockFeedSigner(new PublicKey(a.feeds.tUSDC)));
   } finally { await db.close(); }
 });
 test('simulation failure still returns transaction; custom IDL translations, unknown, sanitized logs', async () => {

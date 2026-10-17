@@ -15,11 +15,16 @@ const ACTIONS: { id: WalletAction; label: string; allLabel?: string }[] = [
   { id: 'repay', label: '还款', allLabel: '还清全部' },
 ];
 
+/** 从别的 tab 跳过来时预选的操作与代币;nonce 让"同一个预设再点一次"也能生效。 */
+export interface WalletPreset { action: WalletAction; bank: string; nonce: number }
+
 /** 我的钱包 + 对借贷池的操作。交易由服务端构建、钱包签名、服务端转发。 */
-export function WalletPanel({ banks, accounts }: { banks: BankView[]; accounts: AccountView[] }) {
+export function WalletPanel({ banks, accounts, onTransaction, onOpenTx, fast, preset }: {
+  banks: BankView[]; accounts: AccountView[]; onTransaction: () => void; onOpenTx: (signature: string) => void; fast: boolean; preset: WalletPreset | null;
+}) {
   const { publicKey, signTransaction, connected } = useWallet();
   const address = publicKey?.toBase58() ?? null;
-  const info = usePoll<WalletView | null>(() => (address ? chain.wallet(address) : Promise.resolve(null)), [address], 6000);
+  const info = usePoll<WalletView | null>(() => (address ? chain.wallet(address) : Promise.resolve(null)), [address, fast], fast ? 1500 : 6000);
   const mine = accounts.find((a) => a.authority === address) ?? null;
 
   const [action, setAction] = useState<WalletAction>('deposit');
@@ -31,6 +36,7 @@ export function WalletPanel({ banks, accounts }: { banks: BankView[]; accounts: 
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<SendResponse | null>(null);
 
+  useEffect(() => { if (preset) { setAction(preset.action); setBankAddress(preset.bank); setAll(false); } }, [preset]);
   const bank = useMemo(() => banks.find((b) => b.address === bankAddress) ?? banks[0], [banks, bankAddress]);
   useEffect(() => { setBuilt(null); setSent(null); setError(null); }, [action, bankAddress, amount, all, address]);
 
@@ -52,7 +58,9 @@ export function WalletPanel({ banks, accounts }: { banks: BankView[]; accounts: 
     try {
       const signed = await signTransaction(VersionedTransaction.deserialize(b64.decode(built.transaction)));
       setBusy('发送并等待确认…');
-      setSent(await chain.send(b64.encode(signed.serialize())));
+      const result = await chain.send(b64.encode(signed.serialize()));
+      setSent(result);
+      if (result.status === 'confirmed') onTransaction(); // 交易一确认就加速刷新,让页面尽快反映出来
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
   };
@@ -76,7 +84,7 @@ export function WalletPanel({ banks, accounts }: { banks: BankView[]; accounts: 
             {w?.tokens.map((t) => <tr key={t.mint}><td>{t.label}</td><td className="n">{fmtToken(t.amount, t.decimals)}</td></tr>)}
           </tbody></table>
           {sol != null && sol < 0.01 && <p className="err">SOL 不足以付手续费,请到 <a href="https://faucet.solana.com" target="_blank" rel="noreferrer">faucet.solana.com</a> 领取。</p>}
-          {w?.faucet_url && address && <GetTokens address={address} faucetUrl={w.faucet_url} tokens={w.tokens} solLamports={BigInt(w.sol_lamports)} />}
+          {w?.faucet_url && address && <GetTokens address={address} faucetUrl={w.faucet_url} tokens={w.tokens} solLamports={BigInt(w.sol_lamports)} onDone={onTransaction} />}
           <div className="label" style={{ marginTop: 12 }}>我在池子里的账户</div>
           {mine ? (
             <div>
@@ -115,7 +123,8 @@ export function WalletPanel({ banks, accounts }: { banks: BankView[]; accounts: 
             <div className={sent.status === 'confirmed' ? 'ok' : 'err'}>
               {sent.status === 'confirmed' ? '✓ 已确认' : sent.status === 'timeout' ? '⏱ 确认超时(交易可能仍会上链)' : `✗ 失败:${sent.error?.message ?? ''}`}
               {' '}<a href={explorer(sent.signature)} target="_blank" rel="noreferrer">在 Explorer 查看</a>
-              {sent.status === 'confirmed' && <div className="muted">索引器需要几十秒(等到 finalized)才会更新上面的数字。</div>}
+              {sent.status === 'confirmed' && <> · <button className="linkish" onClick={() => onOpenTx(sent.signature)}>用 X 光看这笔交易</button>
+                <div className="muted">索引器在 confirmed 后几秒内入库;X 光若提示找不到,稍等再点。</div></>}
             </div>)}
         </div>
       </div>

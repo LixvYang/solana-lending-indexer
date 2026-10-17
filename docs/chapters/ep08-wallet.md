@@ -15,7 +15,7 @@
       ▼
    API ──► RPC(Helius 密钥只在服务端)
    
- 水龙头(独立进程,专用钱包)      价格维护进程(独立,管理员钱包)
+ 水龙头 + 兑换台(独立进程,专用钱包)
 ```
 
 交易**由服务端构建、钱包签名、服务端转发**。这样做有三个理由:浏览器里不需要塞进 Anchor;RPC 的 API key 不会暴露给浏览器;发送之前能先**模拟**,把链上错误翻译成人话,用户不会白花手续费。
@@ -28,9 +28,9 @@
 |---|---|---|---|
 | **用户钱包** | 用户自己的钱包 | 自己的交易,并付手续费 | 只能动自己的资产 |
 | **一次性 marginfi 账户密钥** | 构建接口里临时生成,不落盘 | 只签"创建这个账户" | 无 |
-| **公开的价格账户密钥** | 由固定字符串派生,**公开** | 写价格(演示用 mock) | 任何人本来就能写,所以不构成新风险 |
+| **公开的价格账户密钥** | 由固定字符串派生,**公开** | 刷新价格时间戳(随用户的借款/取款交易) | 任何人本来就能写,所以不构成新风险 |
 | **水龙头专用钱包** | 只在水龙头进程里 | 转账测试币 | 最多转走水龙头里有的那点测试币 |
-| **管理员钱包**(group admin、mint authority) | **只在命令行工具里**(`faucet-setup`、`price-keeper`) | 铸币、写价格 | **绝不进任何常驻的、对外的服务** |
+| **管理员钱包**(group admin、mint authority) | **只在命令行工具里**(`faucet-setup`;可选的 `price-keeper`) | 铸币、写价格 | **绝不进任何常驻的、对外的服务** |
 
 API 进程里没有管理员密钥。转发接口还会拒绝:交易里没有 marginfi 指令的、手续费付款人没有签名的、含地址表的、超过 1232 字节的、签名无法通过 Ed25519 验证的——它不是一个"任意交易中继"。
 
@@ -42,12 +42,14 @@ API 进程里没有管理员密钥。转发接口还会拒绝:交易里没有 ma
 ```ts
 // 账户不是 PDA；唯一一次性 keypair 只签自己的创建，不为用户付费，也不落盘。
 const fresh = user ? null : Keypair.generate(), account = user ? new PublicKey(user.address) : fresh!.publicKey;
+for (const r of refresh) instructions.push(refreshTimestampIx(r.program, r.feed, now));
 if (fresh) instructions.push(await initInstruction(group, account, wallet));
 const amount = request.all ? 0n : BigInt(request.amount);
 instructions.push(await lendingInstruction(request.action, group, account, wallet, target, ata, amount, request.all === true, metas));
 const latest = await services.rpc.getLatestBlockhash('confirmed');
 const tx = new VersionedTransaction(new TransactionMessage({ payerKey: wallet, recentBlockhash: latest.blockhash, instructions }).compileToV0Message());
-if (fresh) tx.sign([fresh]);
+const preSigners = [...(fresh ? [fresh] : []), ...refresh.map(r => r.signer)];
+if (preSigners.length) tx.sign(preSigners); // 一次性账户与公开的价格账户由服务端代签;用户的签名由钱包补上
 ```
 <!-- /snippet -->
 
@@ -130,50 +132,139 @@ export function guardTransaction(input: unknown, accept: (programs: string[], si
 ```
 <!-- /snippet -->
 
-## 获取测试币的第二种方式:用 SOL 兑换
+## 获取测试币的第二种方式:SOL / tSOL / tUSDC 任意兑换
 
-水龙头免费但有限流。想要更多,可以**用 SOL 兑换**。测试币是我们自己发行的,没有真实的 AMM 池子,所以做成一个**固定汇率的原子兑换台**:一笔交易里同时有两件事——用户转 SOL 给兑换台、兑换台转代币给用户。
+水龙头免费但有限流。想要更多,或者想换成别的币,可以**兑换**——SOL、tSOL、tUSDC 任意两两互换。测试币是我们自己发行的,没有真实的 AMM 池子,所以做成一个**固定汇率的原子兑换台**:一笔交易里同时有两件事——你把 A 转给兑换台、兑换台把 B 转给你。
 
 <!-- snippet: src/faucet/swap.ts#ep8-swap-tx -->
 ```ts
-// 一笔交易里两件事:用户转 SOL 给兑换台 + 兑换台转代币给用户。付手续费和 ATA 租金的是用户(payerKey = wallet)，
-// 兑换台只是"转出代币"的授权签名者，不垫付任何 SOL。兑换台的签名覆盖整条消息，用户改动任何内容都会让它失效。
-const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
-  createAssociatedTokenAccountIdempotentInstruction(wallet, userAta, wallet, token.mint),
-  SystemProgram.transfer({ fromPubkey: wallet, toPubkey: payer.publicKey, lamports }),
-  createTransferInstruction(deskAta, userAta, payer.publicKey, out)];
+// 一笔交易里两件事:用户把 from 转给兑换台 + 兑换台把 to 转给用户。付手续费和 ATA 租金的是用户(payerKey = wallet)，
+// 兑换台只是"转出资产"的授权签名者，不垫付手续费。兑换台的签名覆盖整条消息，用户改动任何内容都会让它失效。
+const instructions: TransactionInstruction[] = [ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })];
+if (from.mint) instructions.push(createTransferInstruction(getAssociatedTokenAddressSync(from.mint, wallet), getAssociatedTokenAddressSync(from.mint, desk.publicKey), wallet, amountIn));
+else instructions.push(SystemProgram.transfer({ fromPubkey: wallet, toPubkey: desk.publicKey, lamports: amountIn }));
+if (to.mint) {
+  const userAta = getAssociatedTokenAddressSync(to.mint, wallet);
+  instructions.push(createAssociatedTokenAccountIdempotentInstruction(wallet, userAta, wallet, to.mint),
+    createTransferInstruction(getAssociatedTokenAddressSync(to.mint, desk.publicKey), userAta, desk.publicKey, out));
+} else instructions.push(SystemProgram.transfer({ fromPubkey: desk.publicKey, toPubkey: wallet, lamports: out }));
 const block = await rpc.getLatestBlockhash('confirmed');
 const tx = new VersionedTransaction(new TransactionMessage({ payerKey: wallet, recentBlockhash: block.blockhash, instructions }).compileToV0Message());
-tx.sign([payer]);
+tx.sign([desk]);
 ```
 <!-- /snippet -->
 
 几个关键点:
 
-- **原子的。** 两件事在同一笔交易里,要么都发生要么都不发生,不存在"付了 SOL 没收到币"。
+- **原子的。** 两件事在同一笔交易里,要么都发生要么都不发生,不存在"付了币没收到"。
 - **兑换台先签名,用户再签名。** 兑换台的签名覆盖整条交易消息,用户若改动任何内容,兑换台的签名就失效,交易失败。
-- **手续费和账户租金由用户付**,兑换台只是"转出代币"的授权签名者,不垫付任何 SOL。收到的 SOL 反而补充了兑换台自己的余额。
-- **取整永远向下**,不会多给:
+- **手续费和账户租金由用户付**,兑换台只是"转出资产"的授权签名者,不垫付手续费。
+- **六个方向都支持。** 卖出 SOL 是系统转账,卖出代币是 SPL 转账;买入 SOL 是兑换台系统转账给你,买入代币是兑换台 SPL 转账给你(你的代币账户不存在时由你付租金创建)。
+- **汇率由统一的 USD 单价推导**,三种资产自洽:
 
 <!-- snippet: src/faucet/swap.ts#ep8-swap-math -->
 ```ts
-/** 换出多少:整数运算、向下取整,永远不会多给。例如 0.1 SOL × (50 tUSDC = 50_000_000 原生单位/SOL) = 5_000_000。 */
-export const swapOut = (lamports: bigint, perSolNative: bigint): bigint => lamports * perSolNative / LAMPORTS_PER_SOL;
+/**
+ * 卖出 amountIn(原生单位)能换到多少:整数运算、向下取整,永远不会多给。
+ *   换出 = 卖出 × 单价(卖出) × 10^小数位(换出) / (单价(换出) × 10^小数位(卖出))
+ * 例:1 SOL($50) → tUSDC($1):1e9 × 50e6 × 1e6 / (1e6 × 1e9) = 50e6,即 50 tUSDC。
+ * 因为所有汇率都来自同一张 USD 单价表,SOL→tSOL→tUSDC→SOL 绕一圈只会因取整而略少,不会凭空变多(没有套利环)。
+ */
+export const swapOut = (amountIn: bigint, from: SwapAssetConfig, to: SwapAssetConfig): bigint =>
+  amountIn * from.usdMicro * 10n ** BigInt(to.decimals) / (to.usdMicro * 10n ** BigInt(from.decimals));
+/** 这笔卖出的价值(USD × 1e6),用来做上下限。 */
+export const notionalMicro = (amountIn: bigint, from: SwapAssetConfig): bigint => amountIn * from.usdMicro / 10n ** BigInt(from.decimals);
 ```
 <!-- /snippet -->
 
+  默认 SOL = $50、tSOL = $50、tUSDC = $1,与池子里 tSOL = $50 一致,可用 `SWAP_SOL_USD`、`SWAP_TSOL_USD`、`SWAP_TUSDC_USD` 调整;单笔价值 $0.05 到 $100。因为都来自同一张价格表,SOL → tUSDC → tSOL → SOL 绕一圈只会因为向下取整略少一点点,**不会凭空变多**(没有套利环),测试里对多个起点数量验证过。
+- **兑换台保留 0.05 SOL。** 买入 SOL 时,兑换台的可付出数量是"余额减去 0.05 SOL",留着付代币账户租金等。
 - **转发接口只放行兑换交易。** 兑换台自己的转发接口会检查:兑换台是签名者、所有签名有效、只含 计算预算 / 系统 / 代币 / ATA 这四个程序。复用的是钱包转发接口的同一套签名检查,但程序白名单由调用方传入,**不会放宽钱包转发接口本身**。
-- **汇率是固定的 mock。** 默认 1 SOL = 1 tSOL = 50 tUSDC(与池子里 tSOL = $50 一致),可用 `SWAP_TSOL_PER_SOL`、`SWAP_TUSDC_PER_SOL` 调整;单笔限额 0.001 ~ 1 SOL。**这不是市场价**,视频里要说明。
+- **汇率是固定的 mock,不是市场价**,视频里要说明。
 
-真实 devnet 上用界面点过:0.02 SOL → 1 tUSDC,余额 1,000 → 1,001,界面预估的数量和实际到账一致。
+真实 devnet 上用界面点过三个方向:tUSDC → SOL(25 tUSDC 换 0.5 SOL)、SOL → tSOL(0.2 → 0.2)、tSOL → tUSDC(0.2 tSOL 换 10 tUSDC),预估数量与实际到账一致。
 
-## 价格维护进程
+## 价格保鲜:在交易里顺手刷新,前端无感
 
-marginfi 要求价格在 `oracle_max_age`(我们配的是 240 秒)内更新过。**没有人更新,借款和取款就会失败。** 真实的 Switchboard 靠 oracle 持续推送;我们用的是 mock 价格(EP3),所以需要一个进程每 60 秒把价格账户的时间戳和 slot 重写一次,**价格本身保持不变**。
+marginfi 要求价格在 `oracle_max_age`(我们配的是 240 秒)内更新过,否则借款和取款会失败。真实的 Switchboard 靠 oracle 持续推送;我们用的是 mock 价格(EP3),需要有人定时把价格账户的时间戳重写一次。
 
-构建接口还会提前检查:价格距今超过 `oracle_max_age` 的**一半**就拒绝并提示"价格维护进程没有运行"——而不是让用户签了名才失败。
+**最初的做法是一个后台"价格维护进程"**,每 60 秒刷新一次。它上线不久就暴露了问题:连续 5 次刷新失败后它按设计退出了,价格 8 个多小时没更新,用户借款时看到"价格维护进程没有运行"。**这种错误不该让用户感知,更不该依赖一个会挂掉的进程。**
 
-> 这个进程用管理员钱包付手续费,所以它是命令行工具,不是 API 的一部分。改价用 `scripts/set-price.ts`。
+现在的做法:构建借款/取款交易时,如果价格账户的时间戳不够新(超过 30 秒),服务端**直接在这笔交易里加一条"刷新时间戳"的指令**:
+
+<!-- snippet: src/api/builder/index.ts#ep8-price-refresh -->
+```ts
+// 借款/取款要求价格新鲜。价格由谁来保鲜不该让用户操心:如果价格账户是我们自己的 mock(密钥公开派生),
+// 就在这笔交易里顺手把时间戳刷新到当前链上时间——价格数值不动,手续费包含在用户这笔交易里。
+// 这样不依赖任何后台进程;进程挂了、刚重启、网络抖动都不会让用户看到"价格过期"。
+const refresh: { feed: PublicKey; program: PublicKey; signer: Keypair }[] = [];
+let now = 0n;
+if (request.action === 'borrow' || request.action === 'withdraw') {
+  now = await clusterTime(services);
+  for (const address of new Set([...remaining, request.bank])) {
+    const feedKey = new PublicKey(banks[address].config.oracle_keys[0]);
+    const feed = await services.rpc.getAccountInfo(feedKey, 'confirmed'); // 读链上当前值，库里的快照不能作为新鲜度证据
+    if (!feed || !(services.oracleOwners ?? oracleOwners()).has(feed.owner.toBase58())) throw new PriceStale();
+    const price = decodePullFeed(feed.data);
+    if (!price.sample_size) throw new PriceStale(); // 从未有过价格:没有可保鲜的值
+    const age = now - price.last_update_timestamp;
+    if (age <= REFRESH_AFTER_SECONDS && age >= 0n) continue; // 够新,不动(正常运行时这笔交易保持最小)
+    const signer = mockFeedSigner(feedKey);
+    if (!signer) throw new PriceStale(); // 不是我们的 mock(比如真实预言机):不能代为刷新
+    refresh.push({ feed: feedKey, program: feed.owner, signer });
+  }
+}
+```
+<!-- /snippet -->
+
+- **只写 8 字节的时间戳**,价格数值一个字节都不动。测试里断言写入偏移落在时间戳字段上,没有碰到结果值区域。
+- **价格账户的密钥是公开派生的**(`feed/tSOL`、`feed/tUSDC`),服务端可以代签;手续费包含在用户这笔交易里。这不是新风险:这些密钥本来就是公开的,任何人都能写这些价格(这是 mock 的性质)。
+- **用链上时间,不用本机时间**,避免本机时钟偏快写出"未来"的时间戳。
+- **只有真正无法刷新时才报错**:价格账户不存在、从未有过价格、价格账户不是我们的 mock(比如将来换成真实预言机),此时提示"价格暂时不可用,请稍后重试",不提内部细节。
+- **验证方式**:把价格维护进程**关掉**,价格过期 140 秒以上,再用全新钱包走完 借款、还款、取款——全部通过。借款的计算单元从 51,503 增加到 53,216,多出来的就是两条刷新指令。
+
+`scripts/price-keeper.ts` 还保留着,但**不再是必需的**。
+
+## 页面多快能反映出你刚发的交易
+
+最初的实时跟随只入库 `finalized` 的数据,交易确认后还要再等 30 秒以上页面才变化——用户点完借款,借贷池的数字半天不动。
+
+现在跟随模式默认按 **`confirmed`** 入库:交易确认后几秒内页面就能更新(实测:链上确认用了 4.0 秒,API 在确认后 2.1 秒看到了变化)。前端在交易确认后还会**加速轮询** 45 秒(1.5 秒一次)。
+
+`confirmed` 的代价是极少数情况下会回滚,所以配了一个**终局确认清扫**:
+
+<!-- snippet: src/ingest/finalize.ts#ep6-finalize-sweep -->
+```ts
+/**
+ * 乐观入库的安全网:confirmed 就入库让页面更快,之后逐步确认它们是否真的 finalized。
+ *  - 状态是 finalized          → 标记为终局;
+ *  - 查不到,且 finalized slot 已超过它 150 个 slot → 它在被丢弃的分叉上,删除(解码出的指令/事件随外键级联删除);
+ *  - 其余(还在 confirmed、或还没过观察期)→ 下一轮再看。
+ */
+export async function finalizeSweep(db: Db, rpc: SweepRpc, batch = 100): Promise<{ finalized: number; dropped: number; pending: number }> {
+  const rows = (await db.query('SELECT signature, slot FROM raw_tx WHERE NOT finalized ORDER BY slot LIMIT $1', [batch])).rows;
+  if (!rows.length) return { finalized: 0, dropped: 0, pending: 0 };
+  const finalizedSlot = await rpc.getFinalizedSlot();
+  const statuses = await rpc.getSignatureStatuses(rows.map(r => String(r.signature)));
+  let finalized = 0, dropped = 0, pending = 0;
+  for (const [i, row] of rows.entries()) {
+    const status = statuses[i], signature = String(row.signature);
+    if (status?.confirmationStatus === 'finalized') {
+      await db.query('UPDATE raw_tx SET finalized = TRUE WHERE signature = $1', [signature]); finalized++;
+    } else if (!status && finalizedSlot >= Number(row.slot) + DROP_AFTER_SLOTS) {
+      await db.query('DELETE FROM raw_tx WHERE signature = $1', [signature]); dropped++;
+    } else pending++;
+  }
+  return { finalized, dropped, pending };
+}
+```
+<!-- /snippet -->
+
+- 入库时 `raw_tx.finalized = false`;清扫每轮检查这些交易的签名状态:已 `finalized` 的标记为终局;
+- 如果一笔交易**查不到**,并且 finalized slot 已经超过它 150 个 slot(约 60 秒),就认定它在被丢弃的分叉上,**删除它,解码出的指令和事件随外键级联删除**;
+- **观察期内查不到的不删**:负载均衡的 RPC 节点可能落后,暂时查不到一笔真实存在的交易,误删比晚删糟糕得多。
+
+回填和扫区间(`--backfill`、`--tail`)仍然只认 `finalized`;`--commitment confirmed` 只允许用于 `--follow`。
 
 ## 水龙头
 
@@ -206,11 +297,10 @@ export function reserve(state: LimitState, wallet: string, ip: string, now: numb
 
 ```bash
 pnpm exec tsx scripts/faucet-setup.ts          # 一次性:创建水龙头钱包并充值(需管理员钱包)
-pnpm exec tsx scripts/price-keeper.ts          # 终端 1:价格维护
-pnpm exec tsx scripts/serve-api.ts             # 终端 2:API(需要 RPC_URL;POOL_GROUP 指定池子)
-pnpm exec tsx scripts/faucet.ts                # 终端 3:水龙头
-pnpm exec tsx scripts/ingest.ts --follow       # 终端 4:实时跟随链上新交易
-(cd web && pnpm dev)                           # 终端 5:前端 http://localhost:5173
+pnpm exec tsx scripts/serve-api.ts             # 终端 1:API(需要 RPC_URL;POOL_GROUP 指定池子)
+pnpm exec tsx scripts/faucet.ts                # 终端 2:水龙头 + 兑换台
+pnpm exec tsx scripts/ingest.ts --follow       # 终端 3:实时跟随链上新交易(confirmed 乐观入库,见下)
+(cd web && pnpm dev)                           # 终端 4:前端 http://localhost:5173
 ```
 
 不想点界面,可以用端到端脚本——它用一个全新的钱包通过真实的 HTTP 接口走完整个流程:
@@ -249,7 +339,7 @@ pnpm exec tsx scripts/e2e-wallet.ts
 
 - **仅 devnet、仅测试币。** 水龙头的限流在内存里,没有真正的防刷;没有信任代理时只看 socket IP,不信 `X-Forwarded-For`。
 - **只支持普通 SPL Token。** 不支持 Token-2022 和 staked asset 这类特殊的 remaining accounts。
-- **价格维护进程和改价可能互相覆盖。** 它们并发时,可能读到旧价格后覆盖新值。演示改价请先停维护进程,改完再启动。
+- **维护进程和改价工具并发时可能互相覆盖。** 它们都会写价格账户,可能读到旧价格后覆盖新值。如果不运行可选的维护进程,就没有这个问题。
 - **转发超时不等于交易没上链。** 原签名可能稍后成功,不要直接重复构建。
 - **价格是 mock。** Switchboard oracle 离线,见 EP3。
 

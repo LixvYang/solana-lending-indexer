@@ -4,6 +4,7 @@ import { runStoreCommand, reportError } from './store-command';
 import { Rpc } from '../src/ingest/rpc';
 import { backfill } from '../src/ingest/signatures';
 import { tailOnce } from '../src/ingest/tail';
+import { finalizeSweep } from '../src/ingest/finalize';
 import { syncStored } from '../src/store/sync';
 import { marginfiIdl } from '../src/decoder/idl';
 async function main() {
@@ -11,16 +12,20 @@ async function main() {
   if (args.length === 1 && args[0] === '--help') { console.log('用法: ' + ingestUsage.replace(/^用法: /, '')); return; }
   const options = parseIngestArgs(args);
   if (!process.env.RPC_URL) throw new Error('RPC_URL is required');
-  const rpc = new Rpc(process.env.RPC_URL);
+  // 跟随模式默认 confirmed:交易几秒内就能出现在页面上;之后由终局清扫确认或删除(见 src/ingest/finalize.ts)。
+  // 回填和扫区间永远 finalized。
+  const commitment = options.commitment ?? (options.mode === 'follow' ? 'confirmed' : 'finalized');
+  const rpc = new Rpc(process.env.RPC_URL, { commitment });
   await runStoreCommand(async db => {
     for (;;) {
       // follow:每轮一次 getSignaturesForAddress，遇到已知签名即停——适合演示时实时跟随(几乎不耗 RPC 额度)。
       // tail:逐 slot getBlock，只适合扫一小段；追赶历史请用 backfill。
       const inserted = options.mode === 'backfill' ? await backfill(db, rpc, marginfiIdl.address)
-        : options.mode === 'follow' ? await backfill(db, rpc, marginfiIdl.address, { stopAtKnown: true })
+        : options.mode === 'follow' ? await backfill(db, rpc, marginfiIdl.address, { stopAtKnown: true, finalized: commitment === 'finalized' })
         : await tailOnce(db, rpc, marginfiIdl.address, options.from, options.to);
       const { decoded, snapshots } = await syncStored(db, rpc, marginfiIdl);
-      console.log(`inserted=${inserted} decoded=${decoded} snapshots=${snapshots}`);
+      const sweep = commitment === 'confirmed' ? await finalizeSweep(db, rpc) : null;
+      console.log(`inserted=${inserted} decoded=${decoded} snapshots=${snapshots}${sweep ? ` finalized=${sweep.finalized} dropped=${sweep.dropped} pending=${sweep.pending}` : ''}`);
       if (options.mode === 'backfill' || options.once || options.to !== undefined) return;
       // follow 每 5 秒一轮(finalized 本身就有十几秒延迟，更频繁没有意义)。
       await new Promise(resolve => setTimeout(resolve, options.mode === 'follow' ? 5000 : 2000));

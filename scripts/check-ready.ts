@@ -53,7 +53,7 @@ const safe = async <T>(f: () => Promise<T>): Promise<T | null> => { try { return
     if (!feeds.rows.length) warn("没有价格账户快照:先 ingest(会顺带快照价格账户)");
   } finally { await db.close(); }
 
-  section("价格新鲜度(借款/清算需要价格在 240 秒内更新过)");
+  section("价格(借款/取款会在交易里自动刷新时间戳,不需要维护进程;这里只显示,方便录制时解释)");
   if (mocks) {
     for (const token of ["tUSDC", "tSOL"]) {
       const { deriveKeypair } = await import("../scenario/lib/actors");
@@ -62,7 +62,7 @@ const safe = async <T>(f: () => Promise<T>): Promise<T | null> => { try { return
       if (!info) { bad(`${token} 价格账户不存在`); continue; }
       const { last_update_timestamp, price } = decodePullFeed(info.data);
       const age = Math.floor(Date.now() / 1000) - Number(last_update_timestamp);
-      age < 180 ? ok(`${token} = $${price.number} ,${age} 秒前更新`) : warn(`${token} = $${price.number} ,已 ${age} 秒没更新:录借款/钱包交互前先启动价格维护进程(scripts/price-keeper.ts)`);
+      ok(`${token} = $${price.number} ,时间戳 ${age} 秒前${age > 120 ? "(已超过 120 秒,下一笔借款/取款交易会自动刷新它)" : ""}`);
     }
   }
 

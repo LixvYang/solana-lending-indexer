@@ -1,7 +1,7 @@
 /** INPUT: CLI 参数。 OUTPUT: parseIngestArgs。 POSITION: EP6 无副作用参数入口。 SYNC: 同步 folder.md。 */
-export const ingestUsage = '用法: ingest --backfill | --follow | --tail [--once] [--from <slot>] [--to <slot>]';
-export function parseIngestArgs(args: string[]): { mode: 'backfill' | 'tail' | 'follow'; once: boolean; from?: number; to?: number } {
-  let mode: 'backfill' | 'tail' | 'follow' | undefined, once = false, from: number | undefined, to: number | undefined;
+export const ingestUsage = '用法: ingest --backfill | --follow [--commitment confirmed|finalized] | --tail [--once] [--from <slot>] [--to <slot>]';
+export function parseIngestArgs(args: string[]): { mode: 'backfill' | 'tail' | 'follow'; once: boolean; from?: number; to?: number; commitment?: 'confirmed' | 'finalized' } {
+  let mode: 'backfill' | 'tail' | 'follow' | undefined, once = false, from: number | undefined, to: number | undefined, commitment: 'confirmed' | 'finalized' | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--backfill' || arg === '--tail' || arg === '--follow') {
@@ -12,6 +12,11 @@ export function parseIngestArgs(args: string[]): { mode: 'backfill' | 'tail' | '
       const raw = args[++i];
       if (!raw || !/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new Error('invalid --from slot; ' + ingestUsage);
       from = Number(raw);
+    } else if (arg === '--commitment' && commitment === undefined) {
+      // confirmed 只给跟随模式用(乐观入库,配合终局清扫);回填和扫区间永远只认 finalized。
+      const raw = args[++i];
+      if (raw !== 'confirmed' && raw !== 'finalized') throw new Error('invalid --commitment; ' + ingestUsage);
+      commitment = raw;
     } else if (arg === '--to' && to === undefined) {
       // 上界用于只扫一小段 slot(验证、重放某次运行)；不加则追到当前 finalized。
       const raw = args[++i];
@@ -19,6 +24,6 @@ export function parseIngestArgs(args: string[]): { mode: 'backfill' | 'tail' | '
       to = Number(raw);
     } else throw new Error(ingestUsage);
   }
-  if (!mode || (mode !== 'tail' && (from !== undefined || to !== undefined)) || (mode === 'backfill' && once)) throw new Error(ingestUsage);
-  return { mode, once, ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}) };
+  if (!mode || (mode !== 'tail' && (from !== undefined || to !== undefined)) || (mode === 'backfill' && once) || (commitment === 'confirmed' && mode !== 'follow')) throw new Error(ingestUsage);
+  return { mode, once, ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}), ...(commitment !== undefined ? { commitment } : {}) };
 }

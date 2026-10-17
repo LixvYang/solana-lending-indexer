@@ -18,14 +18,16 @@ async function main() {
   const payer = readKeypair(process.env.FAUCET_KEYPAIR), rpc = cliRpc(), db = pgDb();
   let grants, banks;
   try { banks = (await getPool(db)).banks; grants = faucetGrants(banks); } finally { await db.close(); }
-  // SOL → 测试币的固定汇率(UI 单位/SOL)。默认 1 SOL = 1 tSOL = 50 tUSDC,与池子里 tSOL = $50 一致;这是 mock 汇率,不是市场价。
-  const rate = (label: 'tSOL' | 'tUSDC') => {
+  // 兑换台:SOL / tSOL / tUSDC 任意两两互换,汇率由统一的 USD 单价推导(三者自洽)。
+  // 默认 SOL = $50、tSOL = $50、tUSDC = $1,与池子里 tSOL = $50 一致;这是 mock 汇率,不是市场价。
+  const price = (name: string, fallback: string) => nativeAmount(process.env[name] ?? fallback, 6); // USD × 1e6
+  const token = (label: 'tSOL' | 'tUSDC', usd: bigint) => {
     const bank = banks.find(b => b.label === label)!;
-    return { label, mint: new PublicKey(bank.mint), decimals: bank.decimals,
-      perSolNative: nativeAmount(process.env[`SWAP_${label.toUpperCase()}_PER_SOL`] ?? (label === 'tSOL' ? '1' : '50'), bank.decimals) };
+    return { symbol: label, decimals: bank.decimals, mint: new PublicKey(bank.mint), usdMicro: usd };
   };
-  const swap = createSwap(payer, rpc, { tokens: [rate('tSOL'), rate('tUSDC')],
-    minLamports: nativeAmount(process.env.SWAP_MIN_SOL ?? '0.001', 9), maxLamports: nativeAmount(process.env.SWAP_MAX_SOL ?? '1', 9) });
+  const swap = createSwap(payer, rpc, {
+    assets: [{ symbol: 'SOL', decimals: 9, usdMicro: price('SWAP_SOL_USD', '50') }, token('tSOL', price('SWAP_TSOL_USD', '50')), token('tUSDC', price('SWAP_TUSDC_USD', '1'))],
+    minUsdMicro: price('SWAP_MIN_USD', '0.05'), maxUsdMicro: price('SWAP_MAX_USD', '100') });
   const server = createFaucetServer(createFaucet(payer, rpc, grants, dailyLimit(process.env.FAUCET_DAILY_MAX)), swap);
   server.on('error', () => { console.error('faucet server failed'); process.exitCode = 1; });
   server.listen(portNumber(process.env.FAUCET_PORT ?? '8788'), '127.0.0.1', () => console.log('faucet listening'));

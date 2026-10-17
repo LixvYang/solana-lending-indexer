@@ -1,8 +1,8 @@
 /** INPUT: mock 价格(number 或精确 18 位 bigint)、共用 PullFeed 偏移、剧本 Context。 OUTPUT: 构造/写入价格区。 POSITION: EP3 mock 剧本。 SYNC: 同步 folder.md。 */
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js';
+import { writeIx } from '../../src/oracle/mock-write';
 import { deriveKeypair, type Token } from './actors';
 import type { Context } from './context';
 import { writeJson } from './record';
@@ -52,15 +52,8 @@ export function resultRegion(price: number | bigint, timestamp: number, slot: nu
 }
 // #endregion
 
-/** mocks 程序的 write(offset, data)：把任意字节写进账户，目标账户必须签名。 */
-export function writeIx(program: PublicKey, target: PublicKey, offset: number, data: Buffer): TransactionInstruction {
-  const head = Buffer.alloc(8 + 8 + 4);
-  createHash('sha256').update('global:write').digest().subarray(0, 8).copy(head);
-  head.writeBigUInt64LE(BigInt(offset), 8);
-  head.writeUInt32LE(data.length, 16);
-  return new TransactionInstruction({ programId: program, keys: [{ pubkey: target, isSigner: true, isWritable: true }],
-    data: Buffer.concat([head, data]) });
-}
+// writeIx 在 src/oracle/mock-write.ts(API 的构建器也要用,不能让 src 依赖 scenario)。
+export { writeIx };
 
 async function chainTime(ctx: Context) {
   const connection = ctx.provider.connection;
