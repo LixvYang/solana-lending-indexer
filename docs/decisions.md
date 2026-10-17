@@ -436,3 +436,14 @@ codex 的 M7a 离线测试通过后,接上真实 devnet(Helius)、真实 Postgre
 - 缺 favicon 导致每次首次加载控制台一条 404。
 
 **验证:** 无头 Chrome(playwright-core)在 1280 浅色与 390 深色下逐个 tab 检查:无横向溢出、无控制台错误、图标渲染、选择器不越出视口;用开发测试钱包在真实 devnet 上通过界面完成一次兑换(0.005 SOL → 0.524808 tUSDC)。**未做:** 人眼看截图(本次工具链拿不到图像);真实 Phantom 点一遍。
+
+## D-021 测试币链上元数据(2026-10-17,devnet 已写入)
+
+钱包按 Metaplex 元数据的 `uri` 取 JSON、再按 JSON 的 `image` 显示图标。托管选了本仓库(公开):`assets/tokens/` 放 PNG/SVG/JSON,URI 用 `raw.githubusercontent.com/LixvYang/solana-lending-indexer/main/...`。没选 Irys devnet,因为 devnet 上传约 60 天后过期,图标会消失。
+
+- 图标从运行中的前端导出(与 `web/src/tokens.tsx` 同一份设计),渲染成 512×512 透明 PNG;角标描边在独立文件里改为白色。
+- `scripts/token-metadata.ts` 手写 `CreateMetadataAccountV3`(判别字节 33)/ `UpdateMetadataAccountV2`(15),幂等;写入前先确认 URI 可访问,避免把死链写上链。先在 devnet 模拟三条创建指令均通过,再发送。
+- 元数据账户:tSOL `Cb3bcMCk…`、tUSDC `ACp5y2pq…`、pSOL `HmDUF2Cd…`;update authority 为管理员钱包,`is_mutable = true`,以后可改。重跑脚本三项均"已是最新,跳过"。
+- 独立核对:Helius DAS `getAsset` 对三个 mint 解析出正确的名称、符号、JSON 与图片地址。
+
+**未验证:** 真实 Phantom/Solflare 里的显示效果(钱包可能对未认证的 devnet 代币做缓存或折叠);raw.githubusercontent.com 有几分钟缓存,改图后钱包可能延迟刷新。名称是中文,个别钱包的字体回退效果未看过。
