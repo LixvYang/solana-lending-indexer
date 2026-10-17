@@ -57,6 +57,7 @@ pnpm exec tsx scripts/ingest.ts --backfill
 pnpm exec tsx scripts/load-labels.ts
 pnpm exec tsx scripts/verify-db.ts         # 读回对账 + 解码表 md5
 pnpm exec tsx scripts/serve-api.ts &       # 数据库里有多个池子时设 POOL_GROUP
+FAUCET_KEYPAIR=… pnpm exec tsx scripts/add-pyth-bank.ts   # 可选:加 Pyth 定价的 pSOL 银行(D-019)
 (cd web && pnpm install && pnpm dev)       # http://localhost:5173
 ```
 
@@ -66,7 +67,7 @@ pnpm exec tsx scripts/serve-api.ts &       # 数据库里有多个池子时设 P
 
 ## 局限
 
-- **价格是 mock**(见上)。
+- **价格大多是 mock**:tSOL/tUSDC 用我们写入的价格(清算演示需要按需改价);pSOL 用 Pyth devnet 的真实 SOL/USD(D-019)。
 - **回填只入库 finalized**;实时跟随(`--follow`)按 confirmed 乐观入库,再由终局清扫确认或删除被丢弃分叉上的交易(见 EP8)。
 - **账户状态只有快照**,没有逐笔历史状态。
 - **只解码剧本涉及的指令**,其余原样存为 `unknown`。

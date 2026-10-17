@@ -39,13 +39,17 @@
 
 - 2026-10-14:价格自动保鲜(不依赖后台进程)、confirmed 乐观入库 + 终局清扫、SOL/tSOL/tUSDC 任意互换、界面静默刷新(D-016、D-017)。
 
+- 2026-10-17:前端加代币图标与说明,借贷池改为市场列表,兑换独立成页(参照 Aave/Jupiter);修复角标类名冲突、余额加载闪烁与钱包接口慢(D-020)。
+
+- 2026-10-17:新增 Pyth 定价的 pSOL 银行(devnet 两个方向借款 + HTTP 端到端通过),兑换台改为按预言机定价并加入 pSOL,健康度按程序的价格区间计算(D-019)。
+
 - 2026-10-17:前端改为四个 tab(借贷池 / 账户 / 链上活动 / 我来操作),新增代币参数卡与"存入/借出"直达;复查 Switchboard devnet oracle 仍离线(D-018)。
 
 ## 下一步
 
 1. **录制视频**:先拍 EP2–EP7,最后拍 EP1;EP8 可选。分镜在 `video/`,清单在 `docs/recording-checklist.md`,开拍前跑 `scripts/check-ready.ts`。
 2. 用真实 Phantom/Solflare 试一遍钱包交互(目前只用开发测试钱包验证过签名流程)。
-3. 监控 Switchboard devnet oracle,恢复后评估切回真实价格(`PRICE_ORACLE=switchboard`)。2026-10-17 复查仍离线,见 D-018。
+3. ~~监控 Switchboard~~:Switchboard 已于 2026-09 整体关停,不会恢复(D-018)。真实价格已通过 pSOL 银行(Pyth)提供(D-019);待办:真实 Phantom 走一遍 pSOL 流程、长时间观察 Pyth devnet 更新节奏。
 4. 已知待办:账户状态逐笔历史;压测与长时间运行;在真实分叉上验证终局清扫的删除路径。
 
 ## M2 离线验收（2026-10-12）
@@ -103,3 +107,7 @@
 - 四次临时源代码突变均各1项失败、exit=1后还原：remaining逆序(角色/remaining金标准不同)；首次deposit漏init(一次性账户变成非signer，签名阶段失败)；删除PriceStale判断(缺少预期409拒绝)；删除marginfi守卫(任意非marginfi交易未拒绝)。它们与坏输入测试区分记录。
 - 没有联网、发送链上交易、重跑剧本、部署、提交git、生成持久密钥文件、启动Docker/Postgres/socket或前端联调。正常setup/水龙头/keeper/set-price路径没有实际运行；真实devnet模拟、真实转账、真实keeper写入、钱包兼容、长期/负载/多进程限流均待验证。CLI只实际运行help与非法参数，编排只用假RPC。
 - 不确定性：indexer新账户发现延迟、关闭账户无墓碑、混slot/旧bank配置、keeper与改价并发覆盖；上游SwitchboardPull的oracle_max_age=0与任务240秒fallback有差异。timeout可能稍后落链。契约异议(未改)：HTTP错误体无共享类型；SendRequest缺过期高度；all时amount仍必填但忽略；密钥注释未区分水龙头/管理员独立进程。细节见D-015。
+
+## 本机工具链核查（2026-10-17）
+
+- 只读核查 `rclaude`：本机 SSH 启动 VPS Claude，VPS 经 Tailscale SSH 回连 Mac 的 `claude mcp serve`，文件和命令工具在 Mac 执行；回连实测返回 Darwin 与当前项目路径。未修改中转配置或项目代码。发现多个 PPID=1 的 MCP 服务进程，是否为残留待验证；工具可访问范围未按项目目录做系统级隔离。

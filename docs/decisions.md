@@ -383,3 +383,56 @@ codex 的 M7a 离线测试通过后,接上真实 devnet(Helius)、真实 Postgre
 - 验证:web typecheck、`vite build` 通过;无头 Chrome 对真实 API 渲染,四个 hash 各自只显示对应面板、无错误;`?mock=liquidation` 下账户 tab 显示"1 可清算"。**未做**:人工肉眼看截图(本次工具链只能拿到 DOM)、真实钱包点一遍预设跳转。
 
 **Switchboard 复查。** 链上读队列 `EYiAmGSd…` 的 9 个 oracle:`nodeTimeout` 300 秒,最新心跳距今 625,732 秒(约 7.2 天),其余 31–60 天;与 D-008(10-11 时约 39 小时)对比,10-11 之后没有任何新心跳。`crossbar.switchboard.xyz` 仍无响应,`crossbar.switchboardlabs.xyz/gateways?network=devnet` 仍返回 `[]`。npm 上 `@switchboard-xyz/on-demand` 最新仍是 3.10.6(2026-07-30),与仓库固定版本相同,没有新的 devnet 队列。**结论:真实 Switchboard 在 devnet 仍不可用,继续使用 D-009 的 mock 布局方案。**
+
+**对照 usdx-solana 的历史做法(2026-10-17 复查)。** usdx 在 2026-09-14~17 自建 Switchboard feed 成功(`docs/ops/switchboard-devnet.md`、提交 `089789f`):任务定义走 Crossbar **v1 `/store`**(body `{jobs, queue}`,queue 用 base58),用 SDK `PullFeed.fetchUpdateIx` crank;固定价 feed `9MxhTu4V…` 报出 $1。本项目 D-008 已经采用同一做法(v1 `/store`、feed 创建成功),所以没有遗漏的配置可以照搬。用 usdx 自己的 feed 和代码路径复测(只取签名、不发交易):
+- usdx 的两个 feed 最后一次更新都在约 33 天前(即 usdx 停止工作的 09-14~17),之后没人 crank 过;
+- SDK 默认的 `crossbar.switchboard.xyz` DNS 解析失败(`ENOTFOUND`);
+- 换 `crossbar.switchboardlabs.xyz` 后 `/fetch/<feedHash>` 返回 404(`Feed not found … public HTTP 429`),usdx 存的任务定义已取不回。这一项可以靠重新 `/store` 补上;
+- 队列登记的 oracle gateway(`*.xip.switchboard-oracles.xyz/devnet`)直连 12 秒超时,oracle 心跳停在约 7 天前。**这一项我们修不了**:feed 只能由 oracle 签名写入。
+
+结论不变:usdx 当时能用,是因为那时 devnet oracle 还活着(其文档记录 09-14 队列心跳是"刚刚");现在差别在网络,不在配置。
+
+**Switchboard 已整体关停(2026-10-17 联网核实)。** Switchboard Technology Labs 于 2026-09-19 宣布所有实现弃用,09-25 停止全部支持,建议迁到 Pyth / RedStone;`docs.switchboard.xyz` 已不可达。链上复测同上(最新心跳约 7.3 天前,gateway 超时)。**不会恢复,不再"监控等待"。**
+
+**devnet 上可用的真实价格:Pyth 赞助喂价。** shard 0 的 PriceUpdateV2 账户(owner `rec5EK…`,校验级别 Full)在 devnet 持续更新:SOL/USD `7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE`、USDC/USD `Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX`;实测更新间隔约 1–2 分钟(另有偏离触发)。mrgn-0.1.0 已有 `PythPushOracle`(OracleSetup 3),`oracle_max_age` 需 ≥ 约 180 秒。限制:价格跟真实行情走,无法按需打低,演示清算仍需 mock。
+
+**最新 marginfi(0dotxyz/marginfi-v2,tag mrgn-0.1.12-rc2)的预言机。** OracleSetup 共 29 种,没有 RedStone、没有 Chainlink 直连。0.1.11 新增 `Fixed` 系列(管理员 `lending_pool_set_oracle_price` 设价)与 `Scope`(Kamino 的聚合器,选 OraclePrices 的 512 个槽之一);0.1.12 加 `ScopeKamino/ScopeJuplend`。代码里 `SwitchboardPull` 未删除,应对方式是新增 Scope 并逐个银行改绑。mainnet 401 个银行的实测分布:PythPushOracle 136、SwitchboardPull 71、PythLegacy 47、Fixed 39、StakedWithPythPush 26、PythLST 23、KaminoPythPush 22、SwitchboardV2 13、其他 24(Scope 仅 1)。71 个 SwitchboardPull 银行是否仍有余额未核实。
+
+**RedStone 只能间接接入:marginfi → Scope → RedStone。** Scope(Kamino-Finance/scope,2026-10-15)的 OracleType 有 `RedStone`(30)、`FixedPrice`(23)、`Chainlink`、Orca/Raydium/Meteora 池价等,Switchboard 类已改为废弃占位。代价:要升级到 marginfi ≥ 0.1.11(布局/IDL/事件全部变化,解码器、fixtures、章节文档要重做),Scope 主网程序 `HFn8GnPA…` 在 devnet 不存在,须自部署;RedStone 在 Solana devnet 的可用性未验证。
+
+## D-019 Pyth 定价的 pSOL 银行与按预言机定价的兑换台(2026-10-17,devnet 已验证)
+
+**做法:只增不改。** 新测试币 pSOL(`bjwmjXvF…z33`,9 位)与银行 `D77PE9gn…r4pN` 挂在线上池子 group `GHVn8kr8…`,`OracleSetup = PythPushOracle(3)`,价格是 Pyth devnet 赞助的 SOL/USD(shard 0 账户 `7UVimffx…jLiE`)。风险参数照搬 tSOL,`oracle_max_age = 300`。tSOL/tUSDC 银行与清算剧本不动(真实价格无法按需打低)。脚本 `scripts/add-pyth-bank.ts` 幂等。
+
+**源码核实(mrgn-0.1.0)与由此带来的改动:**
+- Pyth 银行的 `oracle_keys[0]` 存 **feed id**,不是账户;程序只校验 owner = Pyth Receiver、feed id、校验级别 Full 与年龄,不校验地址。→ 构建器 remaining、索引器快照、API 价格都先经 `oracleAccountOf` 换算(`src/oracle/pyth.ts`)。
+- `PriceUpdateV2` 的 `verification_level` 是变长枚举(Partial 2 字节/Full 1 字节),偏移随之变化 → 手写解码 `src/decoder/pyth.ts`,用真实账户 fixture 加合成 Partial 测试。
+- 健康度用价格**区间**:开仓用 EMA、维持用实时价;资产取下沿、负债取上沿;半宽 Pyth `conf×2.12`、Switchboard `std_dev×1.96`,上限价格 5%。API 原来只用中间价——mock 的 std_dev 为 0 所以过去一致,接入 Pyth 后会偏乐观 → 新增 `src/api/oracle-price.ts`,`health()` 接受区间。用真实验证账户核对(误差 < 1e-5,来自显示余额取整)。
+- Pyth 账户我们不能写,构建器对 Pyth 只检查年龄 ≤ `oracle_max_age`,过期报 `PriceStale`(文案"Pyth 价格暂未更新"),不像 mock 那样在交易里刷新。
+
+**兑换台:** 汇率不再写死(原默认 SOL=$50)。每次报价从链上读各资产在借贷池里用的同一个价格账户(`src/faucet/prices.ts`):SOL、pSOL → Pyth;tSOL、tUSDC → mock。Pyth 超过 600 秒未更新、非 Full、价格 ≤ 0 时拒绝报价。资产增加 pSOL(12 个方向)。水龙头在池子有 pSOL 时额外发 10 pSOL。前端价格旁标注来源,兑换资产列表改为从服务端读取、30 秒刷新。
+
+**验证:**
+- devnet 直接调程序(`verify-pyth-bank.ts`):存 10 pSOL 借 100 tUSDC(签名 `5BP9mQaL…`)、存 500 tUSDC 借 1 pSOL(`4YuD58yL…`),各约 6.4 万 CU。
+- 经新服务的 HTTP 端到端(`e2e-pyth.ts`):SOL→pSOL 兑换、首次存款建账户、借 2 tUSDC(约 8.2 万 CU)、还清、取出全部,均确认;API 对该账户给出"健康"。第一次运行在"还清全部"处因钱包只有借到的本金、不够付利息而失败(SPL Token `Custom(1)`),原错误提示是含糊的"交易未能执行",已改为翻译成余额不足并提示利息;该次的一次性钱包仍欠 2 tUSDC(私钥未保存,devnet 无害)。
+- 离线:新增/改写 Pyth 解码、地址、定价、兑换、构建器、API 集成测试,全套见进度表。
+
+**未验证 / 局限:** 真实钱包(Phantom)对 pSOL 流程未点过;Pyth devnet 赞助更新节奏只实测了几分钟(约 1–2 分钟一次),长时间断更时 pSOL 借款/取款会被拒绝,而且我们无法自行推送(需要 Hermes + receiver 程序,未实现);API 健康度对 Pyth 是浮点近似,未与程序逐位对照(没有程序报告健康度的事件可比);兑换台的报价随行情变化,没有滑点保护,报价到签名之间价格可能已变(成交按报价当时价,风险在兑换台一方)。
+
+## D-020 前端:代币图标与说明、市场列表、独立兑换页(2026-10-17)
+
+**代币展示信息放在前端。** 测试币链上没有 Metaplex 元数据,所以名称、说明、图标登记在 `web/src/tokens.tsx`(按符号查):SOL、pSOL、tSOL、tUSDC 各有内联 SVG 图标,测试币右下角带角标(t / P),和真 SOL 一眼区分;价格来源用角标标明"Pyth 实时 / mock 价"。**未做:** 链上元数据(钱包里显示名称和图标需要 Metaplex 账户 + 一个公开可访问的 JSON/图片地址;目前没有托管地址)。
+
+**界面参照主流产品重排:**
+- 借贷池:四个 KPI(新增"可借流动性");市场列表参照 Aave / marginfi / Kamino——资产列带图标与名称,存/借 APR 并排,利用率条,最高抵押率,每行"存入 / 借出"直达;窄屏每行变卡片。资产详情加入说明、存借 APR 对比与价格账户。
+- 兑换独立成 tab,参照 Jupiter / Uniswap:卖出/买入两个输入框、带图标与余额的代币选择器、翻转按钮、"一半/最大"、汇率可反转、单价/滑点/网络费/限额明细,主按钮文案说明还差什么(连接钱包 / 输入数量 / 余额不足 / 单笔限额)。
+- "我来操作"拆成"钱包资产 + 我的头寸"与操作表单(`wallet/ActionForm.tsx`):代币选择器显示各资产的存借 APR,按动作给出"最多"(存款看钱包、取款看存款、还款看负债)。水龙头缩成一行卡片,引导去兑换。
+- 后端只加了 `GET /api/config`(兑换台地址),让没连钱包时兑换页也能显示汇率。
+
+**联调中发现并修复:**
+- 类名冲突:tab 上"钱包已连接"的绿点用 `.live`(7×7 圆),把所有"Pyth 实时"角标(`.src.live`)压成 14px 的色块——各页面都受影响,窄屏还造成 2px 横向溢出。改名 `.live-dot`。
+- 刚连上钱包时余额未读到被当成 0,兑换按钮先显示"SOL 余额不足"几秒。改为"读取余额中…",余额显示"—"。
+- `/api/wallet` 每次 2.5–4 秒:本机到 Helius 每次 RPC 约 1 秒,且是串行的多次调用;改为 SOL 余额与所有代币账户并行、代币账户一次 `getMultipleAccountsInfo`,热请求约 1–1.3 秒。前端原来"我来操作"和"兑换"各轮询一份,改为在 App 里轮询一次共用。
+- 缺 favicon 导致每次首次加载控制台一条 404。
+
+**验证:** 无头 Chrome(playwright-core)在 1280 浅色与 390 深色下逐个 tab 检查:无横向溢出、无控制台错误、图标渲染、选择器不越出视口;用开发测试钱包在真实 devnet 上通过界面完成一次兑换(0.005 SOL → 0.524808 tUSDC)。**未做:** 人眼看截图(本次工具链拿不到图像);真实 Phantom 点一遍。

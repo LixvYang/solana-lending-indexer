@@ -53,16 +53,20 @@ export function rates(value: number, curve: InterestCurve) {
 
 <!-- snippet: src/api/math.ts#ep7-health -->
 ```ts
-export function health(balances: HealthBalance[], banks: Record<string, HealthBank>, prices: Record<string, number | null>, mode: 'init' | 'maint'): number | null {
+/** prices:纯数字表示没有置信区间;区间时资产用 low、负债用 high(见 oracle-price.ts riskPrice)。 */
+export function health(balances: HealthBalance[], banks: Record<string, HealthBank>, prices: Record<string, number | { low: number; high: number } | null>, mode: 'init' | 'maint'): number | null {
   let result = 0;
   for (const balance of balances) {
     if (!quantity(balance.deposit).numerator && !quantity(balance.borrow).numerator)
       continue;
     const bank = banks[balance.bank], price = prices[balance.bank];
-    if (!bank || price == null || !Number.isFinite(price))
+    if (!bank || price == null)
       return null;
-    result += usd(balance.deposit, bank.decimals, price)! * bank.weights[`asset_${mode}`]
-      - usd(balance.borrow, bank.decimals, price)! * bank.weights[`liability_${mode}`];
+    const low = typeof price === 'number' ? price : price.low, high = typeof price === 'number' ? price : price.high;
+    if (!Number.isFinite(low) || !Number.isFinite(high))
+      return null;
+    result += usd(balance.deposit, bank.decimals, low)! * bank.weights[`asset_${mode}`]
+      - usd(balance.borrow, bank.decimals, high)! * bank.weights[`liability_${mode}`];
   }
   return result;
 }
@@ -76,6 +80,85 @@ export function health(balances: HealthBalance[], banks: Record<string, HealthBa
 ```
 
 清算之后的 `post_health = −701.2518` 同样对得上。**与程序自己的结果在 1e-6 内相等。**
+
+
+### 价格区间与 Pyth 账户
+
+上面的公式用的不是"一个价格"。程序算健康度时,资产按价格区间的**下沿**、负债按**上沿**,开仓用时间加权价、维持用实时价:
+
+<!-- snippet: src/api/oracle-price.ts#ep7-price-bias -->
+```ts
+export interface PriceBand { low: number; high: number }
+/**
+ * 健康度用的不是一个价格,而是一个区间(mrgn-0.1.0 state/price.rs、marginfi_account.rs):
+ * - 开仓(init)用时间加权价,维持(maint)用实时价;
+ * - 资产按区间下沿算、负债按上沿算,对用户永远是保守的一侧;
+ * - 区间半宽 = Pyth conf × 2.12 或 Switchboard std_dev × 1.96,最多不超过价格的 5%。
+ * 我们的 mock 价格 std_dev 为 0,区间退化成一个点。
+ */
+export function riskPrice(feed: FeedData, mode: 'init' | 'maint'): PriceBand {
+  const price = mode === 'init' ? feed.ema : feed.price.number, conf = mode === 'init' ? feed.ema_conf : feed.conf;
+  const half = Math.min(conf * (feed.source === 'pyth' ? 2.12 : 1.96), price * 0.05);
+  return { low: price - half, high: price + half };
+}
+```
+<!-- /snippet -->
+
+我们的 mock 价格 std_dev 为 0,区间退化成一个点,所以上面的清算对账不受影响;Pyth 价格带置信区间(SOL/USD 约 ±$0.05),健康度会比"只看中间价"略保守,`src/api/pyth.test.ts` 用 devnet 上的真实账户核对了方向与数值。
+
+Pyth 的价格账户(`PriceUpdateV2`)布局里有一个变长枚举,所以不能写死偏移:
+
+<!-- snippet: src/decoder/pyth.ts#ep7-pyth-layout -->
+```ts
+/**
+ * Borsh 顺序(pyth_solana_receiver_sdk::price_update::PriceUpdateV2):
+ *   discriminator 8 | write_authority 32 | verification_level 1 或 2 | price_message | posted_slot u64
+ *   price_message = feed_id 32 | price i64 | conf u64 | exponent i32 | publish_time i64 | prev_publish_time i64 | ema_price i64 | ema_conf u64
+ * verification_level 是枚举:0 = Partial { num_signatures: u8 }(2 字节),1 = Full(1 字节)。
+ * 因为它变长,后面所有字段的偏移都取决于这一个字节——不能写死偏移表。
+ * marginfi 只接受 Full(constants.rs MIN_PYTH_PUSH_VERIFICATION_LEVEL)。
+ */
+export function decodePriceUpdate(data: Uint8Array) {
+  const bytes = Buffer.from(data);
+  if (bytes.length !== ACCOUNT_SIZE) throw new Error(`PriceUpdateV2 length must equal ${ACCOUNT_SIZE}`);
+  if (!bytes.subarray(0, 8).equals(DISCRIMINATOR)) throw new Error('invalid PriceUpdateV2 discriminator');
+  const tag = bytes[40];
+  if (tag > 1) throw new Error('invalid verification level');
+  let o = tag === 0 ? 42 : 41;
+  const feed_id = bytes.subarray(o, o + 32).toString('hex'); o += 32;
+  const price = bytes.readBigInt64LE(o), conf = bytes.readBigUInt64LE(o + 8), exponent = bytes.readInt32LE(o + 16);
+  const publish_time = bytes.readBigInt64LE(o + 20), ema_price = bytes.readBigInt64LE(o + 36), ema_conf = bytes.readBigUInt64LE(o + 44);
+  const posted_slot = bytes.readBigUInt64LE(o + 52);
+  // 价格 = price × 10^exponent。exponent 为负(SOL/USD 是 -8),用分母表示,不经过浮点。
+  const scaled = (n: bigint) => {
+    const numerator = exponent < 0 ? n : n * 10n ** BigInt(exponent), denominator = exponent < 0 ? 10n ** BigInt(-exponent) : 1n;
+    return { numerator, denominator, decimal: decimal({ numerator, denominator }, Math.max(0, -exponent)), number: Number(numerator) / Number(denominator) };
+  };
+  return { write_authority: encodeBase58(bytes.subarray(8, 40)), verification: tag === 1 ? 'Full' as const : 'Partial' as const,
+    num_signatures: tag === 0 ? bytes[41] : null, feed_id, price: scaled(price), conf: scaled(conf), ema_price: scaled(ema_price), ema_conf: scaled(ema_conf),
+    exponent, publish_time, posted_slot };
+}
+```
+<!-- /snippet -->
+
+它在哪也要算:银行里存的是 feed id,账户地址由 feed id 推导:
+
+<!-- snippet: src/oracle/pyth.ts#ep7-pyth-address -->
+```ts
+/**
+ * mrgn-0.1.0 的 PythPushOracle 银行里,oracle_keys[0] 存的**不是账户地址,而是 32 字节 feed id**
+ * (marginfi_group.rs get_pyth_push_oracle_feed_id)。交易里要传的价格账户是 Pyth 按 [分片 u16 LE, feed id] 推导的 PDA。
+ * 程序只校验 owner、feed id 与校验级别,不校验地址,所以任何分片都行;我们用 Pyth 自己赞助的 0 号分片。
+ */
+export function pythPushAccount(feedId: string | Uint8Array, shard = SPONSORED_SHARD): PublicKey {
+  const id = typeof feedId === 'string' ? Buffer.from(feedId.replace(/^0x/, ''), 'hex') : Buffer.from(feedId);
+  if (id.length !== 32) throw new Error('feed id must be 32 bytes');
+  const seed = Buffer.alloc(2);
+  seed.writeUInt16LE(shard);
+  return PublicKey.findProgramAddressSync([seed, id], PYTH_PUSH_ORACLE)[0];
+}
+```
+<!-- /snippet -->
 
 ### 缺价格时:unknown
 

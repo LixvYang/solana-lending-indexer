@@ -35,5 +35,7 @@ M2/M3：原始指令、日志、账户字节 → 按 IDL 还原字段与调用�
 
 | switchboard.ts | 预言机 | PullFeed 唯一偏移表、严格布局、精确 18 位价格与显示数 |
 | switchboard.test.ts | 测试 | 真实未 crank fixture、合成价格、时间/slot 与无效布局 |
+| pyth.ts | 预言机 | Pyth PriceUpdateV2:变长校验级别、精确价格/置信区间/EMA |
+| pyth.test.ts | 测试 | 真实 devnet SOL/USD fixture、Partial 偏移、坏布局 |
 
 SYNC: 增删文件或改变职责时更新此表与文件头部。

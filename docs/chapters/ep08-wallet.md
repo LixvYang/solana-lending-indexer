@@ -73,7 +73,10 @@ export function observation(addresses: string[], banks: Record<string, BuildBank
   return addresses.flatMap(address => {
     const bank = banks[address];
     if (!bank || bank.group !== group) throw new ApiError(400, 'active bank outside pool');
-    return [address, bank.config.oracle_keys[0]].map(key => ({ pubkey: new PublicKey(key), isSigner: false, isWritable: false }));
+    // 每个银行跟一个价格账户。Pyth 银行存的是 feed id,要换算成账户地址(oracle/pyth.ts)。
+    const oracle = oracleAccountOf(bank.config);
+    if (!oracle) throw new ApiError(503, 'bank has no oracle');
+    return [address, oracle].map(key => ({ pubkey: new PublicKey(key), isSigner: false, isWritable: false }));
   });
 }
 ```
@@ -132,9 +135,9 @@ export function guardTransaction(input: unknown, accept: (programs: string[], si
 ```
 <!-- /snippet -->
 
-## 获取测试币的第二种方式:SOL / tSOL / tUSDC 任意兑换
+## 获取测试币的第二种方式:SOL 与测试币任意兑换
 
-水龙头免费但有限流。想要更多,或者想换成别的币,可以**兑换**——SOL、tSOL、tUSDC 任意两两互换。测试币是我们自己发行的,没有真实的 AMM 池子,所以做成一个**固定汇率的原子兑换台**:一笔交易里同时有两件事——你把 A 转给兑换台、兑换台把 B 转给你。
+水龙头免费但有限流。想要更多,或者想换成别的币,可以**兑换**——SOL、tSOL、tUSDC、pSOL 任意两两互换。测试币是我们自己发行的,没有真实的 AMM 池子,所以做成一个**原子兑换台**:一笔交易里同时有两件事——你把 A 转给兑换台、兑换台把 B 转给你。汇率不写死,按借贷池用的同一批价格账户来定(见下)。
 
 <!-- snippet: src/faucet/swap.ts#ep8-swap-tx -->
 ```ts
@@ -159,8 +162,8 @@ tx.sign([desk]);
 - **原子的。** 两件事在同一笔交易里,要么都发生要么都不发生,不存在"付了币没收到"。
 - **兑换台先签名,用户再签名。** 兑换台的签名覆盖整条交易消息,用户若改动任何内容,兑换台的签名就失效,交易失败。
 - **手续费和账户租金由用户付**,兑换台只是"转出资产"的授权签名者,不垫付手续费。
-- **六个方向都支持。** 卖出 SOL 是系统转账,卖出代币是 SPL 转账;买入 SOL 是兑换台系统转账给你,买入代币是兑换台 SPL 转账给你(你的代币账户不存在时由你付租金创建)。
-- **汇率由统一的 USD 单价推导**,三种资产自洽:
+- **十二个方向都支持(四种资产两两)。** 卖出 SOL 是系统转账,卖出代币是 SPL 转账;买入 SOL 是兑换台系统转账给你,买入代币是兑换台 SPL 转账给你(你的代币账户不存在时由你付租金创建)。
+- **汇率由同一次报价里的 USD 单价表推导**,所有资产自洽:
 
 <!-- snippet: src/faucet/swap.ts#ep8-swap-math -->
 ```ts
@@ -168,21 +171,47 @@ tx.sign([desk]);
  * 卖出 amountIn(原生单位)能换到多少:整数运算、向下取整,永远不会多给。
  *   换出 = 卖出 × 单价(卖出) × 10^小数位(换出) / (单价(换出) × 10^小数位(卖出))
  * 例:1 SOL($50) → tUSDC($1):1e9 × 50e6 × 1e6 / (1e6 × 1e9) = 50e6,即 50 tUSDC。
- * 因为所有汇率都来自同一张 USD 单价表,SOL→tSOL→tUSDC→SOL 绕一圈只会因取整而略少,不会凭空变多(没有套利环)。
+ * 同一次报价里所有汇率都来自同一张 USD 单价表,SOL→tSOL→tUSDC→SOL 绕一圈只会因取整而略少,不会凭空变多(没有套利环)。
+ * 单价跟着预言机走(Pyth 是真实行情),所以不同时刻的报价会不同。
  */
-export const swapOut = (amountIn: bigint, from: SwapAssetConfig, to: SwapAssetConfig): bigint =>
+export const swapOut = (amountIn: bigint, from: PricedAsset, to: PricedAsset): bigint =>
   amountIn * from.usdMicro * 10n ** BigInt(to.decimals) / (to.usdMicro * 10n ** BigInt(from.decimals));
 /** 这笔卖出的价值(USD × 1e6),用来做上下限。 */
-export const notionalMicro = (amountIn: bigint, from: SwapAssetConfig): bigint => amountIn * from.usdMicro / 10n ** BigInt(from.decimals);
+export const notionalMicro = (amountIn: bigint, from: PricedAsset): bigint => amountIn * from.usdMicro / 10n ** BigInt(from.decimals);
 ```
 <!-- /snippet -->
 
-  默认 SOL = $50、tSOL = $50、tUSDC = $1,与池子里 tSOL = $50 一致,可用 `SWAP_SOL_USD`、`SWAP_TSOL_USD`、`SWAP_TUSDC_USD` 调整;单笔价值 $0.05 到 $100。因为都来自同一张价格表,SOL → tUSDC → tSOL → SOL 绕一圈只会因为向下取整略少一点点,**不会凭空变多**(没有套利环),测试里对多个起点数量验证过。
+  单价在每次报价时从链上读(`src/faucet/prices.ts`):SOL 和 pSOL 读 Pyth SOL/USD(真实行情),tSOL、tUSDC 读池子里的 mock 价格账户——**兑换价和借贷池估值永远是同一个数**。Pyth 价格超过 10 分钟没更新、或价格为 0 时拒绝报价,不按旧价成交。单笔价值 $0.05 到 $100。同一次报价用同一张价格表,SOL → tUSDC → tSOL → SOL 绕一圈只会因为向下取整略少一点点,**不会凭空变多**(没有套利环),测试里对多个起点数量验证过。
 - **兑换台保留 0.05 SOL。** 买入 SOL 时,兑换台的可付出数量是"余额减去 0.05 SOL",留着付代币账户租金等。
 - **转发接口只放行兑换交易。** 兑换台自己的转发接口会检查:兑换台是签名者、所有签名有效、只含 计算预算 / 系统 / 代币 / ATA 这四个程序。复用的是钱包转发接口的同一套签名检查,但程序白名单由调用方传入,**不会放宽钱包转发接口本身**。
-- **汇率是固定的 mock,不是市场价**,视频里要说明。
+- **只有 SOL / pSOL 是市场价**,tSOL / tUSDC 仍是我们设的 mock 价,视频里要说明。
 
-真实 devnet 上用界面点过三个方向:tUSDC → SOL(25 tUSDC 换 0.5 SOL)、SOL → tSOL(0.2 → 0.2)、tSOL → tUSDC(0.2 tSOL 换 10 tUSDC),预估数量与实际到账一致。
+(2026-10-14 固定汇率版本)真实 devnet 上用界面点过三个方向:tUSDC → SOL(25 tUSDC 换 0.5 SOL)、SOL → tSOL(0.2 → 0.2)、tSOL → tUSDC(0.2 tSOL 换 10 tUSDC),预估数量与实际到账一致。
+
+## 真实价格:Pyth 定价的 pSOL 银行
+
+Switchboard 已于 2026-09 关停(D-018),devnet 上还在持续更新的真实价格只剩 Pyth 赞助的价格账户。mrgn-0.1.0 本来就支持 `PythPushOracle`,不用升级程序。我们新发了一个测试币 **pSOL**,在同一个池子里加一个银行,价格绑定 Pyth SOL/USD(`scripts/add-pyth-bank.ts`):
+
+<!-- snippet: scripts/add-pyth-bank.ts#ep8-pyth-configure -->
+```ts
+// 3. 绑定 Pyth:setup = 3(PythPushOracle),"oracle" 参数传的是 feed id(32 字节当 Pubkey),
+//    remaining account 传真正的价格账户,程序用它核对 feed id 是否一致(price.rs check_ai_and_feed_id)。
+const current = await fetchAccount(ctx, 'bank', bank.publicKey);
+if (!(current.config.oracleKeys[0] as PublicKey).equals(feedIdAsKey(FEED_IDS['SOL/USD']))) {
+  await send(ctx, 'configure oracle pSOL (Pyth)', [await ctx.program.methods.lendingPoolConfigureBankOracle(3, feedIdAsKey(FEED_IDS['SOL/USD']))
+    .accountsStrict({ group, admin: ctx.admin.publicKey, bank: bank.publicKey })
+    .remainingAccounts([{ pubkey: feed, isSigner: false, isWritable: false }]).instruction()]);
+}
+```
+<!-- /snippet -->
+
+和 mock 价格的银行比,有三处不同:
+
+- **`oracle_keys[0]` 存的是 feed id,不是账户地址。** 交易里要传的价格账户由 feed id 推导(EP7「价格账户在哪」),构建器与索引器都要先换算。
+- **价格我们写不了。** mock 账户可以在借款交易里顺手刷新时间戳(下一节);Pyth 账户归 Pyth 程序所有,只能检查它没超过银行的 `oracle_max_age`(设为 300 秒,devnet 赞助账户约 1–2 分钟更新一次),超过就如实提示"稍后再试"。
+- **价格不能按需打低**,所以清算演示仍用 tSOL(mock)。pSOL 用来演示"真实预言机"。
+
+`scripts/verify-pyth-bank.ts` 在 devnet 上验证了两个方向:存 pSOL 借 tUSDC(Pyth 价格作抵押)、存 tUSDC 借 pSOL(Pyth 价格作负债)。
 
 ## 价格保鲜:在交易里顺手刷新,前端无感
 
@@ -202,9 +231,17 @@ let now = 0n;
 if (request.action === 'borrow' || request.action === 'withdraw') {
   now = await clusterTime(services);
   for (const address of new Set([...remaining, request.bank])) {
-    const feedKey = new PublicKey(banks[address].config.oracle_keys[0]);
+    const config = banks[address].config, oracle = oracleAccountOf(config);
+    if (!oracle) throw new PriceStale();
+    const feedKey = new PublicKey(oracle);
     const feed = await services.rpc.getAccountInfo(feedKey, 'confirmed'); // 读链上当前值，库里的快照不能作为新鲜度证据
     if (!feed || !(services.oracleOwners ?? oracleOwners()).has(feed.owner.toBase58())) throw new PriceStale();
+    if (isPythPush(config.oracle_setup)) {
+      // Pyth 的价格由 Pyth 自己推送,我们写不了;只能确认它还在银行允许的年龄内,否则如实告诉用户等一下。
+      const pyth = decodePriceUpdate(feed.data);
+      if (pyth.verification !== 'Full' || now - pyth.publish_time > BigInt(config.oracle_max_age)) throw new PriceStale('Pyth 价格暂未更新，请过一两分钟再试。');
+      continue;
+    }
     const price = decodePullFeed(feed.data);
     if (!price.sample_size) throw new PriceStale(); // 从未有过价格:没有可保鲜的值
     const age = now - price.last_update_timestamp;

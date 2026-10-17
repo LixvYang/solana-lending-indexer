@@ -1,14 +1,15 @@
 # src/api
 
 EP7 只读数据库视图与 M7 钱包构建/转发/查询。只读路由只读 Db；钱包路由使用注入 RPC，不持有管理员密钥，不写库。
-契约 `types.ts` 保持不变；价格来自已入库的 PullFeed，标签来自链下 labels。
+价格来自已入库的价格账户(Switchboard 布局的 mock 或 Pyth PriceUpdateV2)，标签来自链下 labels。
 
 | 文件 | 角色 | 功能 |
 |---|---|---|
-| types.ts | 契约 | 与前端共享的 JSON 类型（本任务不修改） |
+| types.ts | 契约 | 与前端共享的 JSON 类型(2026-10-17 加 oracle_source、SwapAsset pSOL) |
 | math.ts | 纯函数 | shares 精确乘法/取整、APR、USD 与 init/maint 健康度 |
 | state.ts | 读取 | 最新状态、IDL bigint 恢复、标签与时间边界 |
-| bank.ts | 池子 | 权重、group 费用缓存、价格与 USD 汇总 |
+| bank.ts | 池子 | 权重、group 费用缓存、价格(按银行换算价格账户)与 USD 汇总 |
+| oracle-price.ts | 价格 | 两种价格账户统一成 FeedData;健康度用的开仓/维持价格区间 |
 | queries.ts | 入口 | 池子、利率曲线与账户；导出活动/X 光查询 |
 | activity.ts | 活动 | 主事件匹配、slot/ix/signature 稳定分页 |
 | spans.ts | 教学 | IDL 顶层参数字节范围、bigint 字符串 |
@@ -21,6 +22,7 @@ EP7 只读数据库视图与 M7 钱包构建/转发/查询。只读路由只读 
 | activity.test.ts | 测试 | 18 行独立分布、主事件、失败交易和游标平局 |
 | xray.test.ts | 测试 | 原始字节/解码/数据库对照、变量参数和合成 v0 inner |
 | server.test.ts | 测试 | 无 socket 的路由/handle、CORS、参数、脱敏和端口 |
+| pyth.test.ts | 测试 | 真实 pSOL 银行/验证账户/Pyth 价格:换算、快照、池子与带区间的健康度 |
 
 | builder/ | 构建 | v0/Anchor、余额槽位、首次部分签名与模拟 |
 | wallet-rpc.ts | RPC | 注入接口、时钟、10 秒请求超时 |
